@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AgGridProvider, AgGridReact } from 'ag-grid-react'
 import { AllCommunityModule, type ColDef, type ICellRendererParams, themeQuartz } from 'ag-grid-community'
-import { PayPalButtons, PayPalScriptProvider } from '@paypal/react-paypal-js'
+import {
+  PayPalProvider,
+  PayPalOneTimePaymentButton,
+  usePayPal,
+  useEligibleMethods,
+  INSTANCE_LOADING_STATE,
+} from '@paypal/react-paypal-js/sdk-v6'
 import {
   Activity, ArrowRight, Bot, CheckCircle2, CircleHelp, CreditCard, ExternalLink,
   MessageCircle, RefreshCw, Search, ShieldCheck, ShoppingBag, SlidersHorizontal,
@@ -31,6 +37,85 @@ type ElasticStatus = { configured: boolean; connected: boolean; event_store: str
 
 const money = (value: number | string) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value))
 const gridDate = (value?: string) => value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+
+
+type PayPalCheckoutControlsProps = {
+  disabled: boolean
+  createOrder: () => Promise<string>
+  onApprove: (orderId: string) => Promise<void>
+  onCancel: () => void
+  onError: (message: string) => void
+}
+
+function getPayPalErrorMessage(value: unknown, fallback: string): string {
+  if (value instanceof Error && value.message.trim()) return value.message
+  if (typeof value === 'object' && value !== null && 'message' in value) {
+    const message = (value as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+  return fallback
+}
+
+/** Must render inside PayPalProvider so SDK and eligibility hooks are available. */
+function PayPalCheckoutControls({
+  disabled,
+  createOrder,
+  onApprove,
+  onCancel,
+  onError,
+}: PayPalCheckoutControlsProps) {
+  const { loadingStatus, error: sdkError } = usePayPal()
+  const {
+    eligiblePaymentMethods,
+    isLoading: eligibilityLoading,
+    error: eligibilityError,
+  } = useEligibleMethods({ payload: { currencyCode: 'USD' } })
+
+  if (loadingStatus === INSTANCE_LOADING_STATE.REJECTED || sdkError) {
+    return (
+      <div className="credential-help">
+        <strong>PayPal SDK could not initialize</strong>
+        <span>{getPayPalErrorMessage(sdkError, 'Check the Sandbox Client ID, app environment, and browser console.')}</span>
+      </div>
+    )
+  }
+
+  if (loadingStatus === INSTANCE_LOADING_STATE.PENDING || eligibilityLoading) {
+    return <div className="paypal-loading">Loading PayPal checkout and checking buyer eligibility…</div>
+  }
+
+  if (eligibilityError) {
+    return (
+      <div className="credential-help">
+        <strong>Could not check PayPal eligibility</strong>
+        <span>{getPayPalErrorMessage(eligibilityError, 'Retry after checking the network and Sandbox configuration.')}</span>
+      </div>
+    )
+  }
+
+  if (!eligiblePaymentMethods?.isEligible('paypal')) {
+    return (
+      <div className="credential-help">
+        <strong>PayPal checkout isn't eligible in this session</strong>
+        <span>Check the Sandbox app configuration and try a Personal Sandbox buyer account. Eligibility can depend on the buyer and currency.</span>
+      </div>
+    )
+  }
+
+  return (
+    <PayPalOneTimePaymentButton
+      type="pay"
+      presentationMode="auto"
+      disabled={disabled}
+      createOrder={async () => ({ orderId: await createOrder() })}
+      onApprove={async data => {
+        await onApprove(data.orderId)
+      }}
+      onCancel={onCancel}
+      onError={error => onError(getPayPalErrorMessage(error, 'Please retry or check the Sandbox configuration.'))}
+    />
+  )
+}
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([])
@@ -124,47 +209,29 @@ export default function App() {
     setValidatedTotal(null)
   }
 
-  function startNewConversation() {
-    setConversationId(null)
-    setChatReply('')
-    setBudget(null)
-    resetCheckoutState()
-    setMessage('New shopping session selected. Your next plan will start a fresh conversation.')
-  }
-
   async function planShopping() {
-    // The main prompt is also allowed to carry a follow-up. If a Channel3
-    // conversation is already active, continue it rather than silently creating
-    // a new context. Use "New conversation" when a completely separate search is intended.
-    const activeConversationId = conversationId
-    setBusy(true); setMessage(''); resetCheckoutState(); setChatReply('')
+    setBusy(true); setMessage(''); resetCheckoutState(); setConversationId(null); setChatReply('')
     try {
-      const response = await fetch(`${API}/api/agent/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: prompt,
-          conversation_id: activeConversationId,
-          budget: activeConversationId ? budget : null,
-          user_id: 'agentpay-web-demo',
-        }),
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || 'Channel3 Conversational Agent request failed')
+      // Start a real Channel3 Conversational Agent turn first. This returns the
+      // conversation ID required for follow-ups such as "show something cheaper".
+      // A normal /search call alone cannot establish conversational context.
+      try {
+        const response = await fetch(`${API}/api/agent/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: prompt, conversation_id: null, budget: null, user_id: 'agentpay-web-demo' }),
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || 'Channel3 Conversational Agent request failed')
+        if (data.conversation_id) setConversationId(data.conversation_id)
+        if (typeof data.constraints?.max_price === 'number') setBudget(data.constraints.max_price)
+        else setBudget(null)
+        let items: Product[] = Array.isArray(data.items) ? data.items : []
+        let source: 'channel3' | 'demo' = data.source === 'channel3' ? 'channel3' : 'demo'
+        let reply = data.text || 'Shopping conversation started.'
 
-      const nextConversationId = data.conversation_id || activeConversationId
-      if (nextConversationId) setConversationId(nextConversationId)
-      if (typeof data.constraints?.max_price === 'number') setBudget(data.constraints.max_price)
-      else if (!activeConversationId) setBudget(null)
-
-      let items: Product[] = Array.isArray(data.items) ? data.items : []
-      let source: 'channel3' | 'demo' = data.source === 'channel3' ? 'channel3' : 'demo'
-      let reply = data.text || (activeConversationId ? 'Shopping conversation updated.' : 'Shopping conversation started.')
-
-      // Only use standalone search as a fallback when starting a new session.
-      // A context-only follow-up must never trigger a fresh search for a fragment
-      // like "cheaper alternatives under $60", because that can match unrelated products.
-      if (!items.length && !activeConversationId) {
-        try {
+        // Some valid conversational turns may answer in text before returning
+        // product cards. Keep their conversation ID and fill the grid from search.
+        if (!items.length) {
           const searchResponse = await fetch(`${API}/api/agent/plan`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
           })
@@ -173,56 +240,33 @@ export default function App() {
             items = searchData.items
             source = searchData.source === 'channel3' ? 'channel3' : 'demo'
           }
-        } catch {
-          // The conversation reply is still useful even if search fallback fails.
         }
-      }
-
-      if (items.length > 0 || !activeConversationId) {
         setProducts(items)
         setCatalogSource(source)
-      } else {
-        reply = `${reply}
-
-No product cards were returned for this follow-up, so the previous results were kept instead of replacing them with unrelated products.`
+        setChatReply(reply)
+        setEvents(old => [...old, `Channel3 conversation started: ${items.length} product matches`])
+        setMessage(data.conversation_id
+          ? 'Shopping plan ready. Follow-up requests will use this conversation context.'
+          : 'Shopping results loaded, but Channel3 did not return a conversation ID. Contextual follow-ups may not persist.')
+      } catch (conversationError) {
+        // Search remains useful if the conversational endpoint is unavailable,
+        // but tell the user clearly that contextual follow-ups are not active.
+        const response = await fetch(`${API}/api/agent/plan`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || 'Shopping plan could not be created')
+        const items: Product[] = data.items || []
+        setProducts(items)
+        setCatalogSource(data.source === 'channel3' ? 'channel3' : 'demo')
+        setBudget(typeof data.constraints?.max_price === 'number' ? data.constraints.max_price : null)
+        setChatReply(`Contextual shopping session could not start: ${conversationError instanceof Error ? conversationError.message : 'Channel3 conversation unavailable'}`)
+        setMessage(`${data.message || 'Search results ready.'} Contextual follow-ups are not active yet.`)
+        setEvents(old => [...old, `${data.source === 'channel3' ? 'Channel3 search' : 'Demo catalog search'}: ${items.length} matches`])
       }
-      setChatReply(reply)
-      setEvents(old => [...old, activeConversationId
-        ? `Channel3 conversation continued: ${items.length} product cards`
-        : `Channel3 conversation started: ${items.length} product matches`])
-      setMessage(nextConversationId
-        ? (activeConversationId
-          ? 'Follow-up processed in the existing shopping conversation. Product context is preserved.'
-          : 'Shopping plan ready. Follow-up requests will use this conversation context.')
-        : 'Results loaded, but Channel3 did not return a conversation ID. Contextual follow-ups may not persist.')
       await refreshTelemetry('')
     } catch (error) {
-      // Do not disguise a failed contextual turn as a fresh standalone search.
-      // That behavior previously returned unrelated products for follow-ups.
-      const messageText = error instanceof Error ? error.message : 'Could not create a shopping plan'
-      setMessage(activeConversationId
-        ? `Could not continue the current shopping conversation: ${messageText}`
-        : messageText)
-      if (!activeConversationId) {
-        try {
-          const response = await fetch(`${API}/api/agent/plan`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
-          })
-          const data = await response.json()
-          if (!response.ok) throw new Error(data.detail || 'Shopping plan could not be created')
-          const items: Product[] = data.items || []
-          setProducts(items)
-          setCatalogSource(data.source === 'channel3' ? 'channel3' : 'demo')
-          setBudget(typeof data.constraints?.max_price === 'number' ? data.constraints.max_price : null)
-          setChatReply(`Contextual shopping session could not start: ${messageText}`)
-          setMessage(`${data.message || 'Search results ready.'} Contextual follow-ups are not active yet.`)
-          setEvents(old => [...old, `${data.source === 'channel3' ? 'Channel3 search' : 'Demo catalog search'}: ${items.length} matches`])
-        } catch (fallbackError) {
-          setMessage(fallbackError instanceof Error ? fallbackError.message : messageText)
-        }
-      } else {
-        setChatReply(messageText)
-      }
+      setMessage(error instanceof Error ? error.message : 'Could not create a shopping plan')
     } finally { setBusy(false) }
   }
 
@@ -369,7 +413,7 @@ No product cards were returned for this follow-up, so the previous results were 
 
       <section className="prompt-card">
         <div className="section-icon"><Sparkles size={19} /></div>
-        <div className="prompt-content"><label htmlFor="shopping-prompt">WHAT ARE YOU LOOKING FOR?</label><textarea id="shopping-prompt" value={prompt} onChange={e => setPrompt(e.target.value)} rows={3} /><div className="prompt-footer"><span>{conversationId ? 'Active Channel3 conversation · edit this prompt to refine the current plan, or start a new conversation.' : catalogSource === 'channel3' ? 'Channel3 agentic search · in-stock USD offers · prices may change.' : 'Demo catalog prices are illustrative USD amounts for Sandbox checkout.'}</span><div className="prompt-footer-actions">{conversationId && <button className="secondary-btn" onClick={startNewConversation} disabled={busy}>New conversation</button>}<button className="primary-btn" onClick={() => void planShopping()} disabled={busy || prompt.trim().length < 3}>{busy ? 'Working…' : conversationId ? 'Refine current plan' : 'Build my plan'} <ArrowRight size={16} /></button></div></div></div>
+        <div className="prompt-content"><label htmlFor="shopping-prompt">WHAT ARE YOU LOOKING FOR?</label><textarea id="shopping-prompt" value={prompt} onChange={e => setPrompt(e.target.value)} rows={3} /><div className="prompt-footer"><span>{catalogSource === 'channel3' ? 'Channel3 agentic search · in-stock USD offers · prices may change.' : 'Demo catalog prices are illustrative USD amounts for Sandbox checkout.'}</span><button className="primary-btn" onClick={() => void planShopping()} disabled={busy || prompt.trim().length < 3}>{busy ? 'Working…' : 'Build my plan'} <ArrowRight size={16} /></button></div></div>
       </section>
 
       <div className="content-grid">
@@ -419,18 +463,49 @@ No product cards were returned for this follow-up, so the previous results were 
             <button className="checkout-btn" disabled={!cart.length || busy || Boolean(orderResult)} onClick={() => void validateBasket()}>{busy ? 'Working…' : basketValidated ? 'Revalidate basket' : 'Validate basket'} <ArrowRight size={16} /></button>
             {basketValidated && cart.length > 0 && !orderResult && <div className="paypal-panel">
               <div className="paypal-panel-title"><ShieldCheck size={16} /> Approve payment securely with PayPal</div>
-              {paypalClientId ? <PayPalScriptProvider key={`paypal-${paypalClientId}`} options={{ clientId: paypalClientId, components: 'buttons', currency: 'USD', intent: 'capture' }}>
-                <PayPalButtons style={{ layout: 'vertical', shape: 'rect', label: 'paypal', tagline: false }} disabled={busy} createOrder={async () => {
-                  try { setBusy(true); setMessage('Creating a PayPal Sandbox order…'); return await createPayPalOrder() }
-                  catch (error) { setMessage(error instanceof Error ? error.message : 'Could not create PayPal order'); throw error }
-                  finally { setBusy(false) }
-                }} onApprove={async data => {
-                  if (!data.orderID) { setMessage('PayPal approval did not return an order ID.'); return }
-                  try { setBusy(true); setMessage('Buyer approved. Verifying capture with PayPal…'); await capturePayPalOrder(data.orderID) }
-                  catch (error) { setMessage(error instanceof Error ? error.message : 'Capture could not be verified') }
-                  finally { setBusy(false) }
-                }} onCancel={() => { setMessage('Checkout cancelled. No completed payment was recorded.'); setEvents(old => [...old, 'Buyer cancelled PayPal checkout']) }} onError={error => { setMessage(`PayPal Checkout error: ${error instanceof Error ? error.message : 'Please retry or check Sandbox credentials.'}`); setEvents(old => [...old, 'PayPal Checkout reported an error']) }} />
-              </PayPalScriptProvider> : <div className="credential-help"><strong>Sandbox Client ID unavailable</strong><span>AgentPay checks the public Client ID from FastAPI first, then <code>VITE_PAYPAL_CLIENT_ID</code> in <code>frontend/.env</code>. Verify <code>PAYPAL_CLIENT_ID</code> in <code>backend/.env</code>, then restart FastAPI. Never put the secret in frontend configuration.</span></div>}
+              {paypalClientId ? <PayPalProvider
+                key={`paypal-v6-${paypalClientId}`}
+                clientId={paypalClientId}
+                environment="sandbox"
+                components={['paypal-payments']}
+                pageType="checkout"
+              >
+                <PayPalCheckoutControls
+                  disabled={busy}
+                  createOrder={async () => {
+                    try {
+                      setBusy(true)
+                      setMessage('Creating a PayPal Sandbox order…')
+                      return await createPayPalOrder()
+                    } catch (error) {
+                      const detail = getPayPalErrorMessage(error, 'Could not create PayPal order')
+                      setMessage(detail)
+                      throw error
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                  onApprove={async orderId => {
+                    try {
+                      setBusy(true)
+                      setMessage('Buyer approved. Verifying capture with PayPal…')
+                      await capturePayPalOrder(orderId)
+                    } catch (error) {
+                      setMessage(getPayPalErrorMessage(error, 'Capture could not be verified'))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                  onCancel={() => {
+                    setMessage('Checkout cancelled. No completed payment was recorded.')
+                    setEvents(old => [...old, 'Buyer cancelled PayPal checkout'])
+                  }}
+                  onError={detail => {
+                    setMessage(`PayPal Checkout error: ${detail}`)
+                    setEvents(old => [...old, 'PayPal Checkout reported an error'])
+                  }}
+                />
+              </PayPalProvider> : <div className="credential-help"><strong>Sandbox Client ID unavailable</strong><span>AgentPay checks the public Client ID from FastAPI first, then <code>VITE_PAYPAL_CLIENT_ID</code> in <code>frontend/.env</code>. Verify <code>PAYPAL_CLIENT_ID</code> in <code>backend/.env</code>, then restart FastAPI. Never put the secret in frontend configuration.</span></div>}
               <p className="sandbox-warning">Sandbox demo payment only: this does not place or fulfill an order with the retailer. Use the retailer offer link to visit the store. Use a Sandbox buyer account, never real payment credentials.</p>
             </div>}
             {orderResult && <div className="order-success"><CheckCircle2 size={22} /><div><strong>Sandbox payment completed</strong><span>Order: {orderResult.orderID}</span><span>Capture: {orderResult.captureID || 'Verified by PayPal'}</span><span>{money(orderResult.total)} · {orderResult.status}</span></div></div>}

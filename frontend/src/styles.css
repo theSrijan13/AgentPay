@@ -1297,47 +1297,12 @@ footer span {
     background: #edf3ff
 }
 
-/* Main prompt actions: distinguish contextual refinement from a fresh session. */
-.prompt-footer-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0
-}
-
-.secondary-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid #dce5f2;
-    background: #fff;
-    color: #586780;
+.paypal-loading {
+    padding: 12px 14px;
+    border: 1px solid #e1e9f7;
+    background: #f7faff;
     border-radius: 9px;
-    padding: 10px 12px;
-    font-size: 11px;
-    font-weight: 750;
-    cursor: pointer;
-    white-space: nowrap
-}
-
-.secondary-btn:hover {
-    background: #f5f8fd;
-    border-color: #cbd8eb
-}
-
-.secondary-btn:disabled {
-    opacity: .5;
-    cursor: not-allowed
-}
-
-@media(max-width:560px) {
-    .prompt-footer-actions {
-        width: 100%;
-        flex-direction: column
-    }
-
-    .prompt-footer-actions .primary-btn,
-    .prompt-footer-actions .secondary-btn {
-        width: 100%
-    }
+    color: #63718a;
+    font-size: 12px;
+    line-height: 1.5
 }
