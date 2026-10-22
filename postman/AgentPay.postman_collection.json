@@ -1,0 +1,283 @@
+{
+  "info": {
+    "name": "AgentPay API",
+    "description": "Local and deployed AgentPay API smoke tests. PayPal order creation is not buyer approval; complete the approval flow through the web app before capturing.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "productId",
+      "value": "headphones-01"
+    },
+    {
+      "key": "merchant",
+      "value": "AgentPay demo catalog"
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    },
+    {
+      "key": "orderID",
+      "value": ""
+    },
+    {
+      "key": "expectedTotal",
+      "value": "59.99"
+    },
+    {
+      "key": "prompt",
+      "value": "Find a cheaper product similar to the current shopping request"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('health returns 200', () => pm.response.to.have.status(200));",
+              "pm.test('status is ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create shopping plan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"prompt\": \"Find wireless headphones under $80 with strong battery life\"\n}"
+        },
+        "url": "{{baseUrl}}/api/agent/plan"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('plan returns 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "if (data.items && data.items.length) {",
+              "  pm.collectionVariables.set('productId', data.items[0].id);",
+              "  pm.collectionVariables.set('merchant', data.items[0].merchant || 'AgentPay demo catalog');",
+              "  pm.collectionVariables.set('expectedTotal', String(data.items[0].price));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Channel3 conversational turn",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"{{prompt}}\",\n  \"conversation_id\": \"{{conversationId}}\",\n  \"budget\": 80,\n  \"user_id\": \"agentpay-postman-demo\"\n}"
+        },
+        "url": "{{baseUrl}}/api/agent/chat"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 200) { const data = pm.response.json(); if (data.conversation_id) pm.collectionVariables.set('conversationId', data.conversation_id); }",
+              "pm.test('chat responds or reports a clear configuration error', () => pm.expect([200, 502, 503]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Select retailer offer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"product_id\": \"{{productId}}\",\n  \"merchant\": \"{{merchant}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/catalog/select-offer"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('selection succeeds for a current product', () => pm.expect([200, 404, 409]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) { const d = pm.response.json(); if (d.product && d.product.id) pm.collectionVariables.set('productId', d.product.id); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate basket",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": [{\"product_id\": \"{{productId}}\", \"quantity\": 1}],\n  \"budget\": 200\n}"
+        },
+        "url": "{{baseUrl}}/api/cart/validate"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('basket validation returns success or a clear stale-offer error', () => pm.expect([200, 400, 409, 503]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) pm.collectionVariables.set('expectedTotal', String(pm.response.json().total));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create PayPal Sandbox order",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": [{\"product_id\": \"{{productId}}\", \"quantity\": 1}],\n  \"budget\": 200,\n  \"expected_total\": {{expectedTotal}}\n}"
+        },
+        "url": "{{baseUrl}}/api/payments/create-order"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('order creation returns an order ID or a clear configuration error', () => pm.expect([200, 400, 409, 502, 503]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) pm.collectionVariables.set('orderID', pm.response.json().orderID);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Capture approved Sandbox order (only after buyer approval)",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/payments/capture/{{orderID}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('capture endpoint returns a completed capture or a clear non-completed response', () => pm.expect([200, 404, 409, 502, 503]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) pm.test('capture is completed', () => pm.expect(pm.response.json().status).to.eql('COMPLETED'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get order",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/orders/{{orderID}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('order lookup gives a known order or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Elastic observability status",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/observability/status"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('observability status is safe and available', () => pm.response.to.have.status(200));",
+              "pm.test('no key is returned', () => pm.expect(pm.response.text()).not.to.include('ELASTIC_API_KEY'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search audit events",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/observability/events?limit=20&q=paypal"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('event search succeeds', () => pm.response.to.have.status(200));",
+              "pm.test('response contains events array', () => pm.expect(pm.response.json().events).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: agentpay-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: APP_ENV
+        value: production
+      - key: FRONTEND_ORIGIN
+        value: https://agentpay-web.onrender.com
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: CHANNEL3_API_KEY
+        sync: false
+      - key: CHANNEL3_BASE_URL
+        value: https://api.trychannel3.com/v1
+      - key: CHANNEL3_SEARCH_MODE
+        value: agentic
+      - key: ELASTICSEARCH_URL
+        sync: false
+      - key: ELASTIC_API_KEY
+        sync: false
+      - key: ELASTIC_INDEX_PREFIX
+        value: agentpay
+
+  - type: web
+    name: agentpay-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://agentpay-api.onrender.com
+      - key: VITE_PAYPAL_CLIENT_ID
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
