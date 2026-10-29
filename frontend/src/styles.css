@@ -1306,3 +1306,967 @@ footer span {
     font-size: 12px;
     line-height: 1.5
 }
+
+/* AgentPay v7: visual shopping, lifecycle/refunds, MCP tools and post-purchase automation */
+.photo-search-card,
+.mcp-card,
+.lifecycle-card,
+.automation-card {
+    background: #fff;
+    border: 1px solid #e4eaf4;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 2px 10px rgba(25, 43, 76, .025);
+    min-width: 0
+}
+
+.photo-search-card {
+    margin: 0 0 22px;
+    display: grid;
+    grid-template-columns: minmax(220px, .7fr) minmax(300px, 1.5fr);
+    gap: 20px;
+    align-items: start
+}
+
+.photo-card-heading {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start
+}
+
+.photo-card-heading h2,
+.mcp-card h2 {
+    font-size: 19px;
+    margin: 4px 0 7px;
+    color: #182640
+}
+
+.photo-card-heading p,
+.mcp-card p {
+    color: #7786a0;
+    font-size: 12px;
+    line-height: 1.6;
+    margin: 0
+}
+
+.photo-search-body {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px
+}
+
+.photo-upload {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    border: 1px dashed #b9c9e8;
+    background: #f8faff;
+    border-radius: 11px;
+    padding: 12px;
+    color: #375887;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer
+}
+
+.photo-upload input {
+    display: block;
+    max-width: 100%;
+    font: inherit;
+    color: #61728e;
+    margin-left: auto;
+    width: 47%
+}
+
+.photo-preview-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px
+}
+
+.photo-preview {
+    width: 104px;
+    height: 92px;
+    object-fit: cover;
+    border: 1px solid #e4eaf4;
+    border-radius: 10px;
+    background: #f7f9fc
+}
+
+.photo-prompt-label,
+.mcp-tool-form label,
+.refund-note-label {
+    font-size: 10px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: #7384a2
+}
+
+.photo-search-body textarea,
+.mcp-tool-form textarea,
+.mcp-tool-form select,
+.refund-note-label+input {
+    width: 100%;
+    border: 1px solid #dfe6f2;
+    border-radius: 9px;
+    padding: 10px 11px;
+    font: inherit;
+    color: #243451;
+    background: #fff;
+    outline: none
+}
+
+.photo-search-body textarea:focus,
+.mcp-tool-form textarea:focus,
+.mcp-tool-form select:focus,
+.refund-note-label+input:focus {
+    border-color: #7ca6ff;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .09)
+}
+
+.photo-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px
+}
+
+.photo-card-footer>span {
+    font-size: 10px;
+    line-height: 1.5;
+    color: #8a97ad;
+    max-width: 55%
+}
+
+.secondary-btn {
+    border: 1px solid #dbe5f8;
+    background: #f7f9ff;
+    color: #245ad3;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 750;
+    padding: 9px 11px;
+    cursor: pointer
+}
+
+.secondary-btn:hover {
+    background: #edf3ff
+}
+
+.secondary-btn:disabled,
+.primary-btn:disabled {
+    opacity: .55;
+    cursor: not-allowed
+}
+
+.icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #f6f8fc;
+    border: 1px solid #e3eaf5;
+    border-radius: 8px;
+    padding: 7px;
+    color: #57708f;
+    cursor: pointer
+}
+
+.mcp-card {
+    margin-top: 18px
+}
+
+.mcp-status-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #71819c;
+    margin: 14px 0
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #f59e0b;
+    flex: 0 0 auto
+}
+
+.status-dot-ready {
+    background: #15946e
+}
+
+.mcp-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px
+}
+
+.mcp-tool-form {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px;
+    background: #f8faff;
+    border: 1px solid #e8eef8;
+    border-radius: 10px
+}
+
+.mcp-tool-description {
+    font-size: 11px !important
+}
+
+.mcp-tool-form .primary-btn {
+    align-self: flex-start
+}
+
+.mcp-result {
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #141c2d;
+    color: #dce7ff;
+    border-radius: 9px;
+    padding: 12px;
+    font-size: 10px;
+    line-height: 1.5;
+    margin: 12px 0
+}
+
+.mcp-safety-note {
+    font-size: 10px !important;
+    line-height: 1.55 !important;
+    color: #8a97aa !important;
+    margin-top: 12px !important
+}
+
+.mcp-safety-note code {
+    background: #eef2fa;
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: #31558f;
+    overflow-wrap: anywhere
+}
+
+.lifecycle-card,
+.automation-card {
+    margin-top: 16px
+}
+
+.lifecycle-description {
+    font-size: 11px;
+    line-height: 1.55;
+    color: #7e8ba3;
+    margin: 0 0 14px
+}
+
+.refund-note-label {
+    display: block;
+    margin-bottom: 6px
+}
+
+.payment-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 14px;
+    max-height: 480px;
+    overflow: auto;
+    padding-right: 2px
+}
+
+.payment-history-row {
+    border: 1px solid #e9eef6;
+    border-radius: 10px;
+    padding: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0
+}
+
+.payment-history-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px
+}
+
+.payment-history-top>strong {
+    color: #1e2c45;
+    font-size: 13px
+}
+
+.state-pill {
+    font-size: 8px;
+    letter-spacing: .03em;
+    font-weight: 850;
+    padding: 4px 6px;
+    border-radius: 20px;
+    color: #147857;
+    background: #eaf9f2;
+    white-space: nowrap
+}
+
+.state-pill-muted {
+    color: #69758b;
+    background: #eef1f6
+}
+
+.payment-history-id,
+.payment-history-sub {
+    font-size: 9px;
+    line-height: 1.5;
+    color: #8290a8;
+    overflow-wrap: anywhere
+}
+
+.refund-amount-input {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid #e1e8f3;
+    border-radius: 7px;
+    padding: 8px;
+    font-size: 10px;
+    color: #263752
+}
+
+.refund-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px
+}
+
+.refund-actions button {
+    font-size: 9px;
+    padding: 8px 5px
+}
+
+.refund-feedback {
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid #cfe8dc;
+    background: #f1fbf6;
+    border-radius: 9px;
+    color: #246b50;
+    font-size: 10px;
+    line-height: 1.55;
+    overflow-wrap: anywhere
+}
+
+.automation-runs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px
+}
+
+.automation-run {
+    padding: 10px;
+    border: 1px solid #e8edf5;
+    border-radius: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px
+}
+
+.automation-run strong {
+    font-size: 9px;
+    color: #2d5cc3;
+    letter-spacing: .05em
+}
+
+.automation-run span {
+    font-size: 9px;
+    color: #8a97aa;
+    overflow-wrap: anywhere
+}
+
+.automation-run p {
+    font-size: 10px !important;
+    margin: 0 !important;
+    line-height: 1.5 !important;
+    color: #667790 !important
+}
+
+@media (max-width: 1000px) {
+    .photo-search-card {
+        grid-template-columns: 1fr
+    }
+
+    .photo-card-footer {
+        align-items: flex-start;
+        flex-direction: column
+    }
+
+    .photo-card-footer>span {
+        max-width: none
+    }
+
+    .photo-upload input {
+        width: 52%
+    }
+}
+
+@media (max-width: 540px) {
+
+    .photo-search-card,
+    .mcp-card,
+    .lifecycle-card,
+    .automation-card {
+        padding: 13px
+    }
+
+    .photo-upload {
+        align-items: flex-start;
+        flex-wrap: wrap
+    }
+
+    .photo-upload input {
+        width: 100%;
+        margin-left: 0
+    }
+
+    .refund-actions {
+        grid-template-columns: 1fr
+    }
+
+    .photo-preview-wrap {
+        align-items: flex-start;
+        flex-direction: column
+    }
+}
+
+
+/* AgentPay visual shopping studio — refreshed image-to-product experience */
+.photo-search-card.photo-studio-card {
+    display: block;
+    margin: 12px 0 26px;
+    padding: 24px;
+    border: 1px solid #dfe7f6;
+    border-radius: 22px;
+    background: radial-gradient(circle at 100% 0%, rgba(226, 235, 255, .7), transparent 36%), linear-gradient(135deg, #fff 0%, #f8faff 100%);
+    box-shadow: 0 12px 35px rgba(30, 60, 120, .06);
+    overflow: hidden
+}
+
+.photo-studio-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+    margin-bottom: 22px
+}
+
+.photo-studio-card .photo-card-heading {
+    align-items: flex-start;
+    gap: 14px;
+    max-width: 800px
+}
+
+.photo-studio-icon {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    border-radius: 14px;
+    background: #eaf1ff;
+    color: #155eef;
+    display: grid;
+    place-items: center
+}
+
+.photo-studio-card .photo-card-heading h2 {
+    font-size: clamp(21px, 2vw, 27px);
+    letter-spacing: -.8px;
+    margin: 6px 0 8px;
+    color: #17243e
+}
+
+.photo-studio-card .photo-card-heading p {
+    font-size: 12px;
+    line-height: 1.7;
+    max-width: 700px;
+    color: #72819b
+}
+
+.photo-ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 12px;
+    border: 1px solid #dbe6ff;
+    border-radius: 100px;
+    background: #fff;
+    color: #315fbd;
+    font-size: 10px;
+    font-weight: 800;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(40, 75, 130, .04)
+}
+
+.photo-studio-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: stretch
+}
+
+.photo-upload-pane,
+.photo-options-pane {
+    min-width: 0;
+    border: 1px solid #e5ebf5;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, .9);
+    padding: 17px;
+    box-shadow: 0 3px 10px rgba(26, 48, 90, .025)
+}
+
+.photo-pane-label {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 12px;
+    color: #62728e;
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: .075em;
+    text-transform: uppercase
+}
+
+.photo-pane-label>span {
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    border-radius: 8px;
+    color: #155eef;
+    background: #edf3ff;
+    letter-spacing: 0;
+    font-size: 10px
+}
+
+.photo-dropzone {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 242px;
+    overflow: hidden;
+    border: 1.5px dashed #b9c9e8;
+    border-radius: 14px;
+    background: linear-gradient(145deg, #f8faff, #f1f6ff);
+    cursor: pointer;
+    transition: border-color .18s, background .18s, box-shadow .18s;
+    isolation: isolate
+}
+
+.photo-dropzone:hover,
+.photo-dropzone.is-dragging {
+    border-color: #4078f6;
+    background: #eef4ff;
+    box-shadow: inset 0 0 0 3px rgba(37, 99, 235, .05)
+}
+
+.photo-dropzone.is-dragging {
+    transform: scale(.995)
+}
+
+.photo-file-input {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important
+}
+
+.photo-upload-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 28px 18px;
+    color: #7c8ba5
+}
+
+.photo-upload-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 18px;
+    display: grid;
+    place-items: center;
+    color: #155eef;
+    background: #fff;
+    border: 1px solid #dce7ff;
+    box-shadow: 0 7px 18px rgba(40, 89, 180, .08);
+    margin-bottom: 15px
+}
+
+.photo-upload-empty>strong {
+    font-size: 15px;
+    font-weight: 800;
+    color: #223451;
+    margin-bottom: 7px;
+    letter-spacing: -.2px
+}
+
+.photo-upload-empty>span {
+    font-size: 11px;
+    color: #7e8ca4
+}
+
+.photo-upload-empty>span b {
+    color: #155eef;
+    font-weight: 800
+}
+
+.photo-filetypes {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 18px
+}
+
+.photo-filetypes>span {
+    padding: 4px 6px;
+    border-radius: 5px;
+    border: 1px solid #dfe7f5;
+    background: #fff;
+    color: #71809b;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: .04em
+}
+
+.photo-filetypes small {
+    margin-left: 5px;
+    color: #8c98ad;
+    font-size: 9px
+}
+
+.photo-dropzone.has-photo {
+    border-style: solid;
+    border-color: #d7e2f6;
+    background: #eef3fc
+}
+
+.photo-dropzone-image {
+    display: block;
+    width: 100%;
+    height: 242px;
+    object-fit: contain;
+    background: #f6f8fc
+}
+
+.photo-image-overlay {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px
+}
+
+.photo-ready-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 9px;
+    border: 1px solid rgba(207, 238, 222, .95);
+    border-radius: 99px;
+    background: rgba(241, 251, 246, .96);
+    color: #18835f;
+    font-size: 10px;
+    font-weight: 800;
+    backdrop-filter: blur(8px)
+}
+
+.photo-replace-hint {
+    padding: 7px 9px;
+    border: 1px solid rgba(255, 255, 255, .7);
+    border-radius: 8px;
+    background: rgba(19, 31, 51, .72);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 750;
+    backdrop-filter: blur(8px)
+}
+
+.photo-file-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 34px;
+    margin-top: 9px
+}
+
+.photo-file-name,
+.photo-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    color: #8290a7;
+    font-size: 10px;
+    line-height: 1.5
+}
+
+.photo-file-name {
+    color: #53647f;
+    flex: 1
+}
+
+.photo-file-name>span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.photo-hint svg,
+.photo-file-name svg {
+    flex: 0 0 auto;
+    color: #7c91b5
+}
+
+.photo-remove-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    border: 0;
+    background: transparent;
+    color: #7f8ca2;
+    font-size: 10px;
+    font-weight: 750;
+    padding: 6px;
+    cursor: pointer
+}
+
+.photo-remove-btn:hover {
+    color: #c24141
+}
+
+.photo-options-pane {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch
+}
+
+.photo-options-pane h3 {
+    font-size: 18px;
+    letter-spacing: -.45px;
+    color: #1c2b46;
+    margin: 0 0 7px
+}
+
+.photo-options-copy {
+    font-size: 11px;
+    line-height: 1.65;
+    color: #8290a6;
+    margin: 0 0 18px
+}
+
+.photo-studio-card .photo-prompt-label {
+    display: block;
+    margin-bottom: 8px;
+    color: #687995;
+    font-size: 9px;
+    letter-spacing: .07em;
+    font-weight: 850
+}
+
+.photo-studio-card .photo-search-body textarea,
+.photo-studio-card textarea {
+    width: 100%;
+    min-height: 104px;
+    resize: vertical;
+    border: 1px solid #dfe7f4;
+    border-radius: 11px;
+    padding: 12px 13px;
+    background: #fbfcff;
+    color: #253653;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.65;
+    outline: none;
+    transition: border-color .18s, box-shadow .18s
+}
+
+.photo-studio-card textarea:focus {
+    border-color: #7aa1ff;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .09)
+}
+
+.photo-suggestion-label {
+    margin: 15px 0 8px;
+    color: #8b97ad;
+    font-size: 8px;
+    letter-spacing: .11em;
+    font-weight: 900
+}
+
+.photo-suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px
+}
+
+.photo-suggestion-chips button {
+    border: 1px solid #e0e8f6;
+    border-radius: 100px;
+    background: #fff;
+    color: #526785;
+    padding: 8px 10px;
+    font-size: 9px;
+    font-weight: 750;
+    cursor: pointer;
+    transition: all .16s
+}
+
+.photo-suggestion-chips button:hover {
+    border-color: #b9ccfa;
+    background: #f3f7ff;
+    color: #155eef
+}
+
+.photo-budget-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 17px;
+    padding: 10px 11px;
+    border: 1px solid #e0e9ff;
+    border-radius: 10px;
+    background: #f6f9ff;
+    color: #71809a;
+    font-size: 10px;
+    line-height: 1.55
+}
+
+.photo-budget-note svg {
+    flex: 0 0 auto;
+    color: #4475de;
+    margin-top: 1px
+}
+
+.photo-submit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    align-self: flex-start;
+    min-height: 42px;
+    margin-top: 14px;
+    padding: 11px 16px;
+    border-radius: 10px;
+    font-size: 11px
+}
+
+.photo-submit-btn:disabled {
+    opacity: .48;
+    cursor: not-allowed
+}
+
+.photo-spin {
+    animation: photo-spin .9s linear infinite
+}
+
+@keyframes photo-spin {
+    to {
+        transform: rotate(360deg)
+    }
+}
+
+.photo-studio-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 15px;
+    margin-top: 18px;
+    border-top: 1px solid #edf1f8;
+    color: #8b97ac;
+    font-size: 9px
+}
+
+.photo-studio-footer>span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px
+}
+
+.photo-studio-footer svg {
+    color: #29956f
+}
+
+.photo-studio-footer i {
+    display: inline-block;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: #c3ccdc;
+    margin: 0 3px
+}
+
+@media(max-width:1050px) {
+    .photo-studio-header {
+        flex-direction: column
+    }
+
+    .photo-studio-grid {
+        grid-template-columns: 1fr
+    }
+
+    .photo-dropzone,
+    .photo-dropzone-image {
+        min-height: 220px;
+        height: 220px
+    }
+}
+
+@media(max-width:560px) {
+    .photo-search-card.photo-studio-card {
+        padding: 14px;
+        border-radius: 16px
+    }
+
+    .photo-upload-pane,
+    .photo-options-pane {
+        padding: 12px
+    }
+
+    .photo-dropzone,
+    .photo-dropzone-image {
+        min-height: 190px;
+        height: 190px
+    }
+
+    .photo-card-heading h2 {
+        font-size: 21px
+    }
+
+    .photo-ai-badge {
+        white-space: normal
+    }
+
+    .photo-studio-footer {
+        align-items: flex-start;
+        flex-direction: column
+    }
+
+    .photo-suggestion-chips button {
+        font-size: 9px
+    }
+}
