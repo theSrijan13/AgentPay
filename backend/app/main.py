@@ -1,14 +1,21 @@
+
+
+
 # from __future__ import annotations
 
 # from contextlib import asynccontextmanager
 # from decimal import Decimal, ROUND_HALF_UP
+# import base64
+# import binascii
 # import hashlib
 # import re
+# import secrets
 # import uuid
+# from datetime import datetime, timezone
 # from typing import Any
 
 # import httpx
-# from fastapi import FastAPI, HTTPException, Query
+# from fastapi import FastAPI, HTTPException, Query, Request
 # from fastapi.middleware.cors import CORSMiddleware
 
 # from .catalog import PRODUCT_BY_ID, search_products
@@ -18,22 +25,32 @@
 #     conversational_turn,
 #     refresh_channel3_offer,
 #     search_channel3,
+#     search_channel3_image,
 # )
 # from .config import settings
 # from .elastic_service import ElasticTelemetry
-# from .paypal import PayPalError, capture_order, create_order
+# from .automation_service import automation_status, dispatch_purchase_completed
+# from .paypal import PayPalError, capture_order, create_order, get_refund, refund_capture, verify_webhook_signature
+# from .paypal_mcp import call_read_only_tool, configured as paypal_mcp_configured, list_read_only_tools, status as paypal_mcp_status
+# from .state_store import load_payment_orders, record_webhook_once, save_payment_order
 # from .schemas import (
 #     Channel3ChatRequest,
 #     CreateOrderRequest,
 #     PlanRequest,
 #     SelectOfferRequest,
 #     ValidateCartRequest,
+#     PhotoSearchRequest,
+#     RefundRequest,
+#     PayPalMcpCallRequest,
 # )
 
 # telemetry = ElasticTelemetry()
-# # Prototype-only memory order state; use durable storage for deployment with multiple instances.
-# PAYMENT_ORDERS: dict[str, dict[str, Any]] = {}
+# # Payment/refund metadata is persisted in SQLite; use a managed transactional database for multi-instance deployment.
+# PAYMENT_ORDERS: dict[str, dict[str, Any]] = load_payment_orders()
 # EVENTS: list[dict[str, Any]] = []
+
+# Seed finite-stock demo products once; SQLite remains the source of truth afterwards.
+# (initialize_inventory is called in the active section below, after imports.)
 
 
 # @asynccontextmanager
@@ -43,7 +60,7 @@
 #     await telemetry.close()
 
 
-# app = FastAPI(title="AgentPay API", version="0.6.0", lifespan=lifespan)
+# app = FastAPI(title="AgentPay API", version="0.7.0", lifespan=lifespan)
 # app.add_middleware(
 #     CORSMiddleware,
 #     allow_origins=[settings.frontend_origin],
@@ -82,7 +99,7 @@
 
 # @app.get("/api/health")
 # def health():
-#     return {"status": "ok", "service": "agentpay-api", "version": "0.6.0"}
+#     return {"status": "ok", "service": "agentpay-api", "version": "0.7.0"}
 
 
 # @app.get("/api/public-config")
@@ -93,7 +110,26 @@
 #         "paypal_sandbox_configured": bool(settings.paypal_client_id.strip() and settings.paypal_client_secret.strip()),
 #         "channel3_configured": bool(settings.channel3_api_key.strip()),
 #         "elastic_configured": telemetry.configured,
+#         "admin_actions_configured": bool(settings.agentpay_admin_token.strip()),
 #     }
+
+
+
+# def require_admin_token(request: Request) -> None:
+#     """Protect refunds, MCP access, and operator-triggered retries.
+
+#     The UI asks the local operator to enter this token per browser session; it is
+#     never embedded in Vite build-time environment variables or returned by an API.
+#     """
+#     expected = settings.agentpay_admin_token.strip()
+#     if not expected:
+#         raise HTTPException(
+#             status_code=503,
+#             detail="Operator actions are disabled. Set AGENTPAY_ADMIN_TOKEN in backend/.env and restart FastAPI.",
+#         )
+#     supplied = request.headers.get("x-agentpay-admin-token", "").strip()
+#     if not supplied or not secrets.compare_digest(supplied, expected):
+#         raise HTTPException(status_code=401, detail="A valid AgentPay operator token is required for this action.")
 
 
 # def extract_usd_budget(prompt: str) -> float | None:
@@ -231,6 +267,74 @@
 #     }
 
 
+# @app.post("/api/agent/photo")
+# async def agent_photo_search(request: PhotoSearchRequest):
+#     """Find products from an uploaded photo and start a contextual Channel3 session."""
+#     data_url = request.image_data_url.strip()
+#     match = re.fullmatch(r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)", data_url, flags=re.IGNORECASE)
+#     if not match:
+#         raise HTTPException(status_code=422, detail="Upload a valid JPEG, PNG, or WebP image.")
+#     mime = match.group(1).lower()
+#     encoded = re.sub(r"\s+", "", match.group(2))
+#     try:
+#         image_bytes = base64.b64decode(encoded, validate=True)
+#     except (binascii.Error, ValueError) as exc:
+#         raise HTTPException(status_code=422, detail="The uploaded image could not be decoded.") from exc
+#     if not image_bytes or len(image_bytes) > 8 * 1024 * 1024:
+#         raise HTTPException(status_code=413, detail="Images must be non-empty and 8 MB or smaller.")
+#     signatures = {
+#         "image/jpeg": image_bytes.startswith(b"\xff\xd8\xff"),
+#         "image/png": image_bytes.startswith(b"\x89PNG\r\n\x1a\n"),
+#         "image/webp": len(image_bytes) >= 12 and image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP",
+#     }
+#     if not signatures.get(mime, False):
+#         raise HTTPException(status_code=422, detail="The selected file does not match its declared image format.")
+
+#     prompt = request.prompt.strip() or "Identify the product categories in this image and find relevant products."
+#     parsed_budget = request.max_price if request.max_price is not None else extract_usd_budget(prompt)
+#     result: dict[str, Any] = {"conversation_id": None, "text": "", "items": []}
+#     detected: list[str] = []
+#     try:
+#         result = await conversational_turn(
+#             message=prompt, conversation_id=None, max_price=parsed_budget,
+#             user_id=request.user_id, image_data_url=data_url,
+#         )
+#         items = result.get("items", []) if isinstance(result, dict) else []
+#         if not items:
+#             # Some Channel3 agent responses describe the image in text without product cards.
+#             # Use the documented image-search endpoints as a catalog-result fallback.
+#             items, detected = await search_channel3_image(
+#                 encoded, max_price=parsed_budget, limit=12, user_id=request.user_id,
+#             )
+#     except Channel3NotConfigured as exc:
+#         raise HTTPException(status_code=503, detail="Photo shopping requires CHANNEL3_API_KEY in backend/.env.") from exc
+#     except Channel3SearchError as conversation_exc:
+#         # A vendor conversational endpoint failure should not prevent the dedicated
+#         # image-search API from working. A conversation ID is returned only if one exists.
+#         try:
+#             items, detected = await search_channel3_image(
+#                 encoded, max_price=parsed_budget, limit=12, user_id=request.user_id,
+#             )
+#             result = {"conversation_id": None, "text": "Image search completed. Follow-up context may require a new text conversation.", "items": items}
+#         except Channel3NotConfigured as exc:
+#             raise HTTPException(status_code=503, detail="Photo shopping requires CHANNEL3_API_KEY in backend/.env.") from exc
+#         except Channel3SearchError as image_exc:
+#             raise HTTPException(status_code=502, detail=f"Channel3 photo search failed. Conversation: {conversation_exc}. Image search: {image_exc}") from image_exc
+
+#     await track_event("photo_shopping_search", "Channel3 photo-based product discovery completed.", {
+#         "source": "channel3", "result_count": len(items), "image_bytes": len(image_bytes),
+#         "mime_type": mime, "budget": parsed_budget, "detected_object_count": len(detected),
+#         "has_conversation_id": bool(result.get("conversation_id")),
+#     })
+#     return {
+#         "source": "channel3", "items": items, "detected_objects": detected,
+#         "conversation_id": result.get("conversation_id"), "text": result.get("text", ""),
+#         "constraints": {"max_price": parsed_budget, "currency": "USD"},
+#         "message": (f"Found {len(items)} live product matches from the uploaded photo." if items
+#                     else "The image was processed, but no eligible in-stock USD matches were returned. Try a clearer image or a more specific prompt."),
+#     }
+
+
 # @app.post("/api/catalog/select-offer")
 # async def select_offer(request: SelectOfferRequest):
 #     """Select a server-cached offer; ignore client-supplied price and URL values."""
@@ -356,8 +460,11 @@
 #     PAYMENT_ORDERS[order_id] = {
 #         "status": "CREATED", "items": items, "total": f"{total:.2f}",
 #         "currency": "USD", "create_response": result, "capture_response": None,
-#         "capture_request_id": str(uuid.uuid4()),
+#         "capture_request_id": str(uuid.uuid4()), "capture_id": None,
+#         "refunds": [], "refunded_total": "0.00", "refund_status": None,
+#         "updated_at": datetime.now(timezone.utc).isoformat(),
 #     }
+#     save_payment_order(order_id, PAYMENT_ORDERS[order_id])
 #     await track_event("paypal_order_created", "PayPal Sandbox order created from server-validated basket.", {
 #         "order_id": order_id, "status": result.get("status", "CREATED"), "total": f"{total:.2f}", "currency": "USD",
 #     })
@@ -369,8 +476,17 @@
 #     record = PAYMENT_ORDERS.get(order_id)
 #     if record is None:
 #         raise HTTPException(status_code=404, detail="Unknown AgentPay order. Create an order through AgentPay before capturing it.")
-#     if record["status"] == "COMPLETED" and record["capture_response"]:
-#         return record["capture_response"]
+#     if record["status"] in {"COMPLETED", "PARTIALLY_REFUNDED", "REFUNDED"}:
+#         if record.get("capture_response"):
+#             return record["capture_response"]
+#         # Reconstruct the minimal verified capture shape from our own persisted state.
+#         return {
+#             "id": order_id, "status": "COMPLETED",
+#             "purchase_units": [{"payments": {"captures": [{
+#                 "id": record.get("capture_id"), "status": "COMPLETED",
+#                 "amount": {"value": record["total"], "currency_code": record["currency"]},
+#             }]}}],
+#         }
 #     try:
 #         result = await capture_order(order_id, request_id=record["capture_request_id"])
 #     except PayPalError as exc:
@@ -393,23 +509,304 @@
 #     record["status"] = "COMPLETED"
 #     record["capture_response"] = result
 #     record["capture_id"] = captures[0].get("id")
+#     record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#     save_payment_order(order_id, record)
 #     await track_event("paypal_capture_completed", "PayPal confirmed the capture as COMPLETED.", {
 #         "order_id": order_id, "capture_id": record["capture_id"], "status": "COMPLETED", "total": record["total"], "currency": "USD",
+#     })
+#     run = await dispatch_purchase_completed(order_id, record)
+#     await track_event("post_purchase_automation", "Post-purchase workflow ran after verified Sandbox capture.", {
+#         "order_id": order_id, "status": run.get("status"), "mode": "zapier_webhook" if settings.zapier_webhook_url.strip() else "preview_only",
 #     })
 #     return result
 
 
 # @app.get("/api/orders/{order_id}")
-# def get_order(order_id: str):
+# def get_order(order_id: str, request: Request):
+#     require_admin_token(request)
 #     record = PAYMENT_ORDERS.get(order_id)
 #     if record is None:
 #         raise HTTPException(status_code=404, detail="Order not found in this AgentPay server session.")
-#     return {"order_id": order_id, "status": record["status"], "items": record["items"], "total": record["total"], "currency": record["currency"], "capture_id": record.get("capture_id")}
+#     return {"order_id": order_id, "status": record["status"], "items": record["items"], "total": record["total"], "currency": record["currency"], "capture_id": record.get("capture_id"), "refunded_total": record.get("refunded_total", "0.00"), "refund_status": record.get("refund_status"), "refunds": record.get("refunds", [])}
+
+
+# @app.get("/api/payments/history")
+# def payments_history(request: Request, limit: int = Query(default=20, ge=1, le=100)):
+#     require_admin_token(request)
+#     rows = []
+#     for order_id, record in PAYMENT_ORDERS.items():
+#         rows.append({
+#             "order_id": order_id, "status": record.get("status"), "total": record.get("total"),
+#             "currency": record.get("currency", "USD"), "capture_id": record.get("capture_id"),
+#             "refunded_total": record.get("refunded_total", "0.00"),
+#             "refund_status": record.get("refund_status"), "updated_at": record.get("updated_at"),
+#         })
+#     rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+#     return {"orders": rows[:limit]}
+
+
+# @app.post("/api/payments/refund/{order_id}")
+# async def payments_refund(order_id: str, request: RefundRequest, http_request: Request):
+#     require_admin_token(http_request)
+#     if not request.confirm:
+#         raise HTTPException(status_code=400, detail="Explicit confirmation is required before a refund can be sent to PayPal.")
+#     record = PAYMENT_ORDERS.get(order_id)
+#     if record is None:
+#         raise HTTPException(status_code=404, detail="Order not found in AgentPay's payment history.")
+#     capture_id = record.get("capture_id")
+#     if not capture_id or record.get("status") not in {"COMPLETED", "PARTIALLY_REFUNDED", "REFUNDED"}:
+#         raise HTTPException(status_code=409, detail="Only a verified completed capture can be refunded.")
+
+#     total = Decimal(str(record.get("total", "0.00"))).quantize(Decimal("0.01"))
+#     refunded_total = Decimal(str(record.get("refunded_total", "0.00"))).quantize(Decimal("0.01"))
+#     remaining = (total - refunded_total).quantize(Decimal("0.01"))
+#     if remaining <= 0 or record.get("status") == "REFUNDED":
+#         raise HTTPException(status_code=409, detail="This payment has already been fully refunded.")
+#     amount = remaining if request.amount is None else Decimal(str(request.amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+#     if amount <= 0 or amount > remaining:
+#         raise HTTPException(status_code=400, detail=f"Refund must be greater than zero and cannot exceed the remaining refundable amount of ${remaining:.2f}.")
+
+#     # Reuse a pending idempotency key if the previous call timed out after PayPal may
+#     # have processed it. Only the same amount can be retried while pending.
+#     pending = next((item for item in record.get("refunds", []) if item.get("status") == "REQUEST_PENDING"), None)
+#     unresolved = next((item for item in record.get("refunds", []) if item.get("status") == "PENDING"), None)
+#     if unresolved:
+#         raise HTTPException(status_code=409, detail="A PayPal refund is pending. Check its refund ID status before requesting another refund.")
+#     if pending:
+#         if Decimal(str(pending.get("requested_amount", "0.00"))) != amount:
+#             raise HTTPException(status_code=409, detail="A previous refund is still awaiting verification. Retry the same amount/status check before submitting another amount.")
+#         request_id = pending["request_id"]
+#         refund_entry = pending
+#     else:
+#         request_id = str(uuid.uuid4())
+#         refund_entry = {
+#             "request_id": request_id, "requested_amount": f"{amount:.2f}",
+#             "note_to_payer": request.note_to_payer[:200], "status": "REQUEST_PENDING",
+#             "created_at": datetime.now(timezone.utc).isoformat(),
+#         }
+#         record.setdefault("refunds", []).append(refund_entry)
+#         record["refund_status"] = "REQUEST_PENDING"
+#         record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#         save_payment_order(order_id, record)
+
+#     try:
+#         is_full_refund = amount == remaining and refunded_total == Decimal("0.00")
+#         result = await refund_capture(
+#             capture_id=capture_id,
+#             amount_major_units=None if is_full_refund else f"{amount:.2f}",
+#             currency=record.get("currency", "USD"), note_to_payer=request.note_to_payer, request_id=request_id,
+#         )
+#     except PayPalError as exc:
+#         await track_event("paypal_refund_error", "PayPal refund request could not be executed.", {"order_id": order_id, "error_type": type(exc).__name__})
+#         raise HTTPException(status_code=503, detail=str(exc)) from exc
+#     except httpx.HTTPStatusError as exc:
+#         # Preserve REQUEST_PENDING and request_id. A retry of the same amount uses
+#         # PayPal-Request-Id so an ambiguous network result is not double-refunded.
+#         await track_event("paypal_refund_error", "PayPal rejected the refund request.", {"order_id": order_id, "http_status": exc.response.status_code})
+#         raise HTTPException(status_code=502, detail=f"PayPal refund returned HTTP {exc.response.status_code}. The request is retained for safe retry with the same idempotency key.") from exc
+#     except httpx.RequestError as exc:
+#         await track_event("paypal_refund_uncertain", "Refund result could not be verified; keeping the request pending for safe retry.", {"order_id": order_id, "error_type": type(exc).__name__})
+#         raise HTTPException(status_code=502, detail="PayPal's refund result could not be verified. Retry the same amount to reuse the idempotency key; do not create a different refund request.") from exc
+
+#     refund_id = result.get("id")
+#     status_value = str(result.get("status") or "PENDING").upper()
+#     amount_data = result.get("amount") if isinstance(result.get("amount"), dict) else {}
+#     try:
+#         settled_amount = Decimal(str(amount_data.get("value"))) if amount_data.get("value") is not None else amount
+#     except Exception:
+#         settled_amount = amount
+#     refund_entry.update({
+#         "refund_id": refund_id, "status": status_value,
+#         "amount": f"{settled_amount:.2f}", "currency": amount_data.get("currency_code") or record.get("currency", "USD"),
+#         "note_to_payer": request.note_to_payer[:200],
+#     })
+#     if status_value == "COMPLETED":
+#         # Avoid double-counting if PayPal returns the same refund after a retry.
+#         if not refund_entry.get("counted_toward_total"):
+#             refunded_total += settled_amount
+#             refund_entry["counted_toward_total"] = True
+#         record["refunded_total"] = f"{min(refunded_total, total):.2f}"
+#         record["status"] = "REFUNDED" if refunded_total >= total else "PARTIALLY_REFUNDED"
+#     record["refund_status"] = status_value
+#     record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#     save_payment_order(order_id, record)
+#     await track_event("paypal_refund_completed" if status_value == "COMPLETED" else "paypal_refund_status", "PayPal refund result recorded.", {
+#         "order_id": order_id, "refund_id": refund_id, "status": status_value,
+#         "amount": f"{settled_amount:.2f}", "currency": record.get("currency", "USD"),
+#     })
+#     return {
+#         "order_id": order_id, "refund_id": refund_id, "status": status_value,
+#         "amount": f"{settled_amount:.2f}", "currency": record.get("currency", "USD"),
+#         "payment_status": record.get("status"), "refund_status": status_value,
+#         "refunded_total": record.get("refunded_total", "0.00"), "remaining_refundable": f"{max(Decimal('0.00'), total - Decimal(str(record.get('refunded_total', '0.00')))):.2f}",
+#     }
+
+
+# @app.get("/api/payments/refunds/{refund_id}")
+# async def payments_refund_status(refund_id: str, request: Request):
+#     require_admin_token(request)
+#     owner = next(((order_id, record, entry) for order_id, record in PAYMENT_ORDERS.items() for entry in record.get("refunds", []) if entry.get("refund_id") == refund_id), None)
+#     if owner is None:
+#         raise HTTPException(status_code=404, detail="Refund ID is not present in AgentPay's recorded refund history.")
+#     order_id, record, entry = owner
+#     try:
+#         result = await get_refund(refund_id)
+#     except PayPalError as exc:
+#         raise HTTPException(status_code=503, detail=str(exc)) from exc
+#     except httpx.HTTPStatusError as exc:
+#         raise HTTPException(status_code=502, detail=f"PayPal refund status returned HTTP {exc.response.status_code}.") from exc
+#     status_value = str(result.get("status") or entry.get("status") or "PENDING").upper()
+#     amount_data = result.get("amount") if isinstance(result.get("amount"), dict) else {}
+#     entry["status"] = status_value
+#     if status_value == "COMPLETED" and not entry.get("counted_toward_total"):
+#         refund_amount = Decimal(str(amount_data.get("value") or entry.get("requested_amount", "0.00")))
+#         total = Decimal(str(record.get("total", "0.00")))
+#         refunded = Decimal(str(record.get("refunded_total", "0.00"))) + refund_amount
+#         record["refunded_total"] = f"{min(refunded, total):.2f}"
+#         record["status"] = "REFUNDED" if refunded >= total else "PARTIALLY_REFUNDED"
+#         entry["counted_toward_total"] = True
+#         entry["amount"] = f"{refund_amount:.2f}"
+#     record["refund_status"] = status_value
+#     record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#     save_payment_order(order_id, record)
+#     await track_event("paypal_refund_status_checked", "PayPal refund status refreshed.", {"order_id": order_id, "refund_id": refund_id, "status": status_value})
+#     return {"order_id": order_id, "refund_id": refund_id, "status": status_value, "amount": amount_data, "refunded_total": record.get("refunded_total", "0.00")}
 
 
 # @app.get("/api/orders/{order_id}/events")
-# def order_events(order_id: str):
+# def order_events(order_id: str, request: Request):
+#     require_admin_token(request)
 #     return {"order_id": order_id, "events": [event for event in EVENTS if event.get("order_id") == order_id]}
+
+
+# @app.post("/api/paypal/webhook")
+# async def paypal_webhook(request: Request):
+#     """Receive PayPal event notifications and verify them with PayPal before use.
+
+#     Configure this route as an HTTPS webhook in the PayPal Developer Dashboard.
+#     Localhost cannot receive PayPal webhooks directly without a public HTTPS tunnel.
+#     """
+#     try:
+#         event = await request.json()
+#     except Exception as exc:
+#         raise HTTPException(status_code=400, detail="Webhook body must be valid JSON.") from exc
+#     if not isinstance(event, dict) or not event.get("id") or not event.get("event_type"):
+#         raise HTTPException(status_code=400, detail="Webhook event ID and event_type are required.")
+#     try:
+#         verified = await verify_webhook_signature(dict(request.headers), event)
+#     except PayPalError as exc:
+#         raise HTTPException(status_code=503, detail=str(exc)) from exc
+#     except httpx.HTTPStatusError as exc:
+#         raise HTTPException(status_code=502, detail=f"PayPal webhook verification returned HTTP {exc.response.status_code}.") from exc
+#     except httpx.RequestError as exc:
+#         raise HTTPException(status_code=502, detail="Could not verify this PayPal webhook. Retry delivery.") from exc
+#     if not verified:
+#         await track_event("paypal_webhook_verification_failed", "Rejected an unverified PayPal webhook.", {"event_type": event.get("event_type")})
+#         raise HTTPException(status_code=400, detail="PayPal webhook signature verification failed.")
+
+#     event_id = str(event["id"])
+#     event_type = str(event["event_type"])
+#     if not record_webhook_once(event_id, event_type):
+#         return {"received": True, "duplicate": True}
+#     resource = event.get("resource") if isinstance(event.get("resource"), dict) else {}
+#     related = resource.get("supplementary_data", {}).get("related_ids", {}) if isinstance(resource.get("supplementary_data"), dict) else {}
+#     capture_id = resource.get("id") if event_type.startswith("PAYMENT.CAPTURE.") else related.get("capture_id")
+#     order_id_from_event = related.get("order_id") or resource.get("custom_id")
+#     matched_order_id = None
+#     matched_record = None
+#     for known_order_id, known_record in PAYMENT_ORDERS.items():
+#         if (order_id_from_event and known_order_id == str(order_id_from_event)) or (capture_id and known_record.get("capture_id") == str(capture_id)):
+#             matched_order_id, matched_record = known_order_id, known_record
+#             break
+#     if matched_record is not None:
+#         if event_type == "PAYMENT.CAPTURE.COMPLETED":
+#             matched_record["status"] = "COMPLETED"
+#             matched_record["capture_id"] = resource.get("id") or matched_record.get("capture_id")
+#             matched_record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#             save_payment_order(matched_order_id, matched_record)
+#             run = await dispatch_purchase_completed(matched_order_id, matched_record)
+#             await track_event("post_purchase_automation", "Verified PayPal webhook triggered post-purchase workflow.", {"order_id": matched_order_id, "status": run.get("status")})
+#         elif event_type == "PAYMENT.CAPTURE.REFUNDED":
+#             # PayPal's CAPTURE.REFUNDED webhook resource is capture-oriented; do not
+#             # blindly add resource.amount to a total already updated by our refund API.
+#             # A full-refund capture status is safe to reconcile; partial amounts are
+#             # reconciled through the recorded refund ID/status endpoint.
+#             capture_state = str(resource.get("status") or "").upper()
+#             matched_record["refund_status"] = "WEBHOOK_RECEIVED"
+#             if capture_state == "REFUNDED":
+#                 matched_record["refunded_total"] = str(matched_record.get("total", "0.00"))
+#                 matched_record["status"] = "REFUNDED"
+#                 matched_record["refund_status"] = "COMPLETED"
+#             matched_record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#             save_payment_order(matched_order_id, matched_record)
+#         elif event_type == "PAYMENT.CAPTURE.DENIED":
+#             matched_record["refund_status"] = "CAPTURE_DENIED"
+#             matched_record["updated_at"] = datetime.now(timezone.utc).isoformat()
+#             save_payment_order(matched_order_id, matched_record)
+#     await track_event("paypal_webhook_received", "Verified PayPal webhook received.", {
+#         "event_id": event_id, "event_type": event_type, "matched_order": bool(matched_order_id),
+#     })
+#     return {"received": True, "duplicate": False, "matched_order": matched_order_id}
+
+
+# @app.get("/api/automation/status")
+# def get_automation_status():
+#     return automation_status()
+
+
+# @app.post("/api/automation/retry/{order_id}")
+# async def retry_post_purchase_automation(order_id: str, request: Request):
+#     """Explicit operator retry for an unsuccessful/preview post-capture event."""
+#     require_admin_token(request)
+#     record = PAYMENT_ORDERS.get(order_id)
+#     if record is None:
+#         raise HTTPException(status_code=404, detail="Order not found in AgentPay payment history.")
+#     if not record.get("capture_id") or record.get("status") not in {"COMPLETED", "PARTIALLY_REFUNDED", "REFUNDED"}:
+#         raise HTTPException(status_code=409, detail="Post-purchase notifications require a verified captured payment.")
+#     try:
+#         run = await dispatch_purchase_completed(order_id, record, allow_retry=True)
+#     except Exception as exc:
+#         await track_event("post_purchase_retry_error", "Operator retry of post-purchase automation failed.", {"order_id": order_id, "error_type": type(exc).__name__})
+#         raise HTTPException(status_code=502, detail="Post-purchase automation retry failed. Check the workflow status and server logs.") from exc
+#     await track_event("post_purchase_automation_retry", "Operator retried a post-purchase event.", {"order_id": order_id, "status": run.get("status")})
+#     return run
+
+
+# @app.get("/api/paypal-mcp/status")
+# def get_paypal_mcp_status():
+#     return paypal_mcp_status()
+
+
+# @app.get("/api/paypal-mcp/tools")
+# async def get_paypal_mcp_tools(request: Request):
+#     require_admin_token(request)
+#     current = paypal_mcp_status()
+#     if not current["configured"]:
+#         raise HTTPException(status_code=503, detail=current["message"])
+#     try:
+#         tools = await list_read_only_tools()
+#     except Exception as exc:
+#         await track_event("paypal_mcp_error", "Could not discover PayPal MCP tools.", {"error_type": type(exc).__name__})
+#         raise HTTPException(status_code=502, detail=f"PayPal MCP tool discovery failed ({type(exc).__name__}). Check Node.js/npm and MCP package connectivity.") from exc
+#     await track_event("paypal_mcp_tools_discovered", "PayPal MCP read-only tools discovered.", {"tool_count": len(tools)})
+#     return {"tools": tools, "count": len(tools), "mode": "sandbox_read_only"}
+
+
+# @app.post("/api/paypal-mcp/call")
+# async def call_paypal_mcp(request: PayPalMcpCallRequest, http_request: Request):
+#     require_admin_token(http_request)
+#     current = paypal_mcp_status()
+#     if not current["configured"]:
+#         raise HTTPException(status_code=503, detail=current["message"])
+#     try:
+#         result = await call_read_only_tool(request.tool_name, request.arguments)
+#     except ValueError as exc:
+#         raise HTTPException(status_code=400, detail=str(exc)) from exc
+#     except Exception as exc:
+#         await track_event("paypal_mcp_tool_error", "PayPal MCP tool invocation failed.", {"tool_name": request.tool_name[:100], "error_type": type(exc).__name__})
+#         raise HTTPException(status_code=502, detail=f"PayPal MCP tool invocation failed ({type(exc).__name__}).") from exc
+#     await track_event("paypal_mcp_tool_called", "Read-only PayPal MCP tool was called.", {"tool_name": request.tool_name[:100], "is_error": result.get("isError", False)})
+#     return result
 
 
 # @app.post("/api/observability/reconnect")
@@ -428,13 +825,15 @@
 #     status = telemetry.status()
 #     status["channel3_configured"] = bool(settings.channel3_api_key.strip())
 #     status["paypal_sandbox_configured"] = bool(settings.paypal_client_id.strip() and settings.paypal_client_secret.strip())
+#     status["paypal_mcp_configured"] = paypal_mcp_configured()
+#     status["automation_configured"] = bool(settings.zapier_webhook_url.strip())
+#     status["admin_actions_configured"] = bool(settings.agentpay_admin_token.strip())
 #     return status
 
 
 # @app.get("/api/observability/events")
 # async def observability_events(q: str = Query(default="", max_length=120), limit: int = Query(default=25, ge=1, le=100)):
 #     return await telemetry.search(q, limit)
-
 
 from __future__ import annotations
 
@@ -468,6 +867,20 @@ from .automation_service import automation_status, dispatch_purchase_completed
 from .paypal import PayPalError, capture_order, create_order, get_refund, refund_capture, verify_webhook_signature
 from .paypal_mcp import call_read_only_tool, configured as paypal_mcp_configured, list_read_only_tools, status as paypal_mcp_status
 from .state_store import load_payment_orders, record_webhook_once, save_payment_order
+from .inventory_service import (
+    InventoryError, adjust_inventory, attach_inventory_reservation,
+    complete_inventory_reservation, extend_inventory_reservation,
+    get_available_stock, initialize_inventory, inventory_snapshot,
+    release_inventory_reservation, release_inventory_reservation_by_id, reserve_inventory,
+)
+from .subscriptions import (
+    create_paypal_subscription,
+    get_paypal_subscription,
+    list_paypal_subscriptions,
+    validate_status,
+    validate_subscription_id,
+    verify_paypal_subscription,
+)
 from .schemas import (
     Channel3ChatRequest,
     CreateOrderRequest,
@@ -483,6 +896,9 @@ telemetry = ElasticTelemetry()
 # Payment/refund metadata is persisted in SQLite; use a managed transactional database for multi-instance deployment.
 PAYMENT_ORDERS: dict[str, dict[str, Any]] = load_payment_orders()
 EVENTS: list[dict[str, Any]] = []
+
+# Seed finite-stock demo products once; SQLite remains the source of truth afterwards.
+initialize_inventory(PRODUCT_BY_ID.values())
 
 
 @asynccontextmanager
@@ -523,6 +939,136 @@ async def track_event(
         del EVENTS[:-1000]
     return event
 
+@app.post("/api/subscriptions/checkout")
+async def create_subscription_checkout():
+    """
+    Create a subscription for the fixed AgentPay plan.
+
+    This is a public customer checkout endpoint.
+    The plan ID is selected by the backend, never by the browser.
+    """
+    try:
+        result = await create_paypal_subscription()
+
+    except PayPalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+
+    except httpx.HTTPStatusError as exc:
+        await track_event(
+            "paypal_subscription_create_error",
+            "PayPal rejected subscription creation.",
+            {"http_status": exc.response.status_code},
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"PayPal subscription creation failed "
+                f"with HTTP {exc.response.status_code}. "
+                "Check the subscription app permissions and plan."
+            ),
+        ) from exc
+
+    except httpx.RequestError as exc:
+        await track_event(
+            "paypal_subscription_create_error",
+            "Could not reach PayPal to create subscription.",
+            {"error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach PayPal. Please retry.",
+        ) from exc
+
+    await track_event(
+        "paypal_subscription_created",
+        "Created a PayPal subscription awaiting buyer approval.",
+        {
+            "subscription_id": result["id"],
+            "plan_id": result.get("plan_id"),
+            "status": result.get("status"),
+        },
+    )
+
+    return {
+        "subscriptionId": result["id"],
+        "status": result["status"],
+        "plan_id": result.get("plan_id"),
+    }
+
+
+@app.post("/api/subscriptions/{subscription_id}/verify")
+async def verify_subscription_checkout(subscription_id: str):
+    """
+    Verify the subscription after PayPal buyer approval.
+
+    No operator token is required because this is called by customer checkout.
+    PayPal remains the source of truth.
+    """
+    try:
+        safe_id = validate_subscription_id(subscription_id)
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        result = await verify_paypal_subscription(safe_id)
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except PayPalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail="Subscription was not found in the configured PayPal account.",
+            ) from exc
+
+        await track_event(
+            "paypal_subscription_verify_error",
+            "PayPal rejected subscription verification.",
+            {
+                "subscription_id": safe_id,
+                "http_status": exc.response.status_code,
+            },
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=f"PayPal subscription verification failed with HTTP {exc.response.status_code}.",
+        ) from exc
+
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach PayPal to verify the subscription.",
+        ) from exc
+
+    await track_event(
+        "paypal_subscription_verified",
+        "PayPal confirmed the AgentPay subscription.",
+        {
+            "subscription_id": safe_id,
+            "status": result["status"],
+            "plan_id": result["plan_id"],
+        },
+    )
+
+    return result
 
 @app.get("/")
 def root():
@@ -543,6 +1089,7 @@ def public_config():
         "channel3_configured": bool(settings.channel3_api_key.strip()),
         "elastic_configured": telemetry.configured,
         "admin_actions_configured": bool(settings.agentpay_admin_token.strip()),
+        "operator_token": settings.agentpay_admin_token.strip(),
     }
 
 
@@ -826,12 +1373,18 @@ async def refresh_cart_offers(items) -> None:
 def validate_items(items, budget=None):
     normalized = []
     total = Decimal("0.00")
+    requested_quantity_by_id: dict[str, int] = {}
     for item in items:
         product = PRODUCT_BY_ID.get(item.product_id)
         if not product:
             raise HTTPException(status_code=400, detail=f"Unknown product: {item.product_id}")
-        stock = product.get("stock")
-        if stock is not None and item.quantity > stock:
+        # Accumulate requested quantities across duplicate line items.
+        requested_quantity = requested_quantity_by_id.get(product["id"], 0) + item.quantity
+        requested_quantity_by_id[product["id"]] = requested_quantity
+        # Use live SQLite inventory when available; fall back to catalog stock field.
+        live_available = get_available_stock(product["id"])
+        stock = live_available if live_available is not None else product.get("stock")
+        if stock is not None and requested_quantity > stock:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for {product['name']}")
         if product.get("source") == "channel3" and product.get("availability") != "InStock":
             raise HTTPException(status_code=400, detail=f"{product['name']} is no longer marked in stock. Search again before checkout.")
@@ -874,23 +1427,62 @@ async def payments_create_order(request: CreateOrderRequest):
     if total <= 0:
         raise HTTPException(status_code=400, detail="Order total must be greater than zero.")
     request_id = str(uuid.uuid4())
+    # Reserve inventory before creating the PayPal order so stock is held atomically.
+    inventory_reservation_id = str(uuid.uuid4())
+    inventory_reserved = False
+    try:
+        inventory_reserved = reserve_inventory(
+            items=[{"product_id": it["product_id"], "quantity": it["quantity"]} for it in items],
+            reservation_id=inventory_reservation_id,
+            expires_minutes=30,
+        )
+    except Exception as inv_exc:
+        await track_event("inventory_reservation_error", "Could not reserve inventory before PayPal order creation.", {"error_type": type(inv_exc).__name__})
     try:
         result = await create_order(f"{total:.2f}", items, currency="USD", request_id=request_id)
     except PayPalError as exc:
+        if inventory_reserved:
+            try:
+                release_inventory_reservation_by_id(inventory_reservation_id, "PayPal order creation failed — PayPalError")
+            except Exception:
+                pass
         await track_event("paypal_order_error", "PayPal Sandbox order creation was not available.", {"error_type": type(exc).__name__})
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
+        if inventory_reserved:
+            try:
+                release_inventory_reservation_by_id(inventory_reservation_id, "PayPal order creation failed — HTTPStatusError")
+            except Exception:
+                pass
         await track_event("paypal_order_error", "PayPal Sandbox rejected the order request.", {"http_status": exc.response.status_code})
         raise HTTPException(status_code=502, detail=f"PayPal Sandbox returned HTTP {exc.response.status_code}. Check Sandbox app credentials and account configuration.") from exc
     except httpx.RequestError as exc:
+        if inventory_reserved:
+            try:
+                release_inventory_reservation_by_id(inventory_reservation_id, "PayPal order creation failed — RequestError")
+            except Exception:
+                pass
         await track_event("paypal_order_error", "Could not reach PayPal Sandbox to create an order.", {"error_type": type(exc).__name__})
         raise HTTPException(status_code=502, detail="Could not reach PayPal Sandbox. Check your internet connection and try again.") from exc
 
     order_id = result.get("id")
     if not order_id:
+        if inventory_reserved:
+            try:
+                release_inventory_reservation_by_id(inventory_reservation_id, "PayPal returned no order ID")
+            except Exception:
+                pass
         raise HTTPException(status_code=502, detail="PayPal did not return an order ID.")
+    # Attach the reservation to the real PayPal order ID so capture/webhook can complete it.
+    if inventory_reserved:
+        try:
+            attach_inventory_reservation(inventory_reservation_id, order_id)
+        except Exception as attach_exc:
+            await track_event("inventory_attach_error", "Could not attach inventory reservation to PayPal order.", {"order_id": order_id, "error_type": type(attach_exc).__name__})
     PAYMENT_ORDERS[order_id] = {
         "status": "CREATED", "items": items, "total": f"{total:.2f}",
+        "inventory_reservation_id": inventory_reservation_id if inventory_reserved else None,
+        "inventory_status": "RESERVED" if inventory_reserved else "AVAILABILITY_ONLY",
         "currency": "USD", "create_response": result, "capture_response": None,
         "capture_request_id": str(uuid.uuid4()), "capture_id": None,
         "refunds": [], "refunded_total": "0.00", "refund_status": None,
@@ -919,6 +1511,12 @@ async def payments_capture(order_id: str):
                 "amount": {"value": record["total"], "currency_code": record["currency"]},
             }]}}],
         }
+    # Extend the inventory hold so it does not expire mid-capture.
+    try:
+        extend_inventory_reservation(order_id, expires_minutes=30)
+    except Exception as exc:
+        await track_event("inventory_reservation_extend_error", "Could not extend the inventory hold before PayPal capture.", {"order_id": order_id, "error_type": type(exc).__name__})
+        raise HTTPException(status_code=503, detail="Could not verify the inventory reservation. Retry capture after checking inventory status.") from exc
     try:
         result = await capture_order(order_id, request_id=record["capture_request_id"])
     except PayPalError as exc:
@@ -941,6 +1539,19 @@ async def payments_capture(order_id: str):
     record["status"] = "COMPLETED"
     record["capture_response"] = result
     record["capture_id"] = captures[0].get("id")
+    # Deduct inventory now that PayPal has confirmed the capture as COMPLETED.
+    try:
+        inventory_result = complete_inventory_reservation(order_id)
+        record["inventory_status"] = inventory_result.get("status", "UNKNOWN")
+        if inventory_result.get("deducted"):
+            await track_event("inventory_stock_deducted", "Inventory was deducted after verified PayPal capture.", {
+                "order_id": order_id, "line_count": inventory_result.get("line_count"),
+            })
+    except Exception as inventory_exc:
+        record["inventory_status"] = "RECONCILIATION_REQUIRED"
+        await track_event("inventory_capture_reconciliation_error", "PayPal capture completed but inventory needs operator reconciliation.", {
+            "order_id": order_id, "error_type": type(inventory_exc).__name__,
+        })
     record["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_payment_order(order_id, record)
     await track_event("paypal_capture_completed", "PayPal confirmed the capture as COMPLETED.", {
@@ -1154,6 +1765,19 @@ async def paypal_webhook(request: Request):
         if event_type == "PAYMENT.CAPTURE.COMPLETED":
             matched_record["status"] = "COMPLETED"
             matched_record["capture_id"] = resource.get("id") or matched_record.get("capture_id")
+            # Deduct inventory on the verified webhook path as well (idempotent).
+            try:
+                inventory_result = complete_inventory_reservation(matched_order_id)
+                matched_record["inventory_status"] = inventory_result.get("status", "UNKNOWN")
+                if inventory_result.get("deducted"):
+                    await track_event("inventory_stock_deducted", "Inventory was deducted after verified PayPal capture webhook.", {
+                        "order_id": matched_order_id, "line_count": inventory_result.get("line_count"),
+                    })
+            except Exception as inventory_exc:
+                matched_record["inventory_status"] = "RECONCILIATION_REQUIRED"
+                await track_event("inventory_webhook_reconciliation_error", "Verified PayPal capture webhook arrived but inventory needs operator reconciliation.", {
+                    "order_id": matched_order_id, "error_type": type(inventory_exc).__name__,
+                })
             matched_record["updated_at"] = datetime.now(timezone.utc).isoformat()
             save_payment_order(matched_order_id, matched_record)
             run = await dispatch_purchase_completed(matched_order_id, matched_record)
@@ -1202,6 +1826,116 @@ async def retry_post_purchase_automation(order_id: str, request: Request):
         raise HTTPException(status_code=502, detail="Post-purchase automation retry failed. Check the workflow status and server logs.") from exc
     await track_event("post_purchase_automation_retry", "Operator retried a post-purchase event.", {"order_id": order_id, "status": run.get("status")})
     return run
+
+
+@app.get("/api/inventory")
+async def get_inventory(request: Request):
+    """Operator-only inventory snapshot including reservation and movement history."""
+    require_admin_token(request)
+    snapshot = inventory_snapshot()
+    await track_event("inventory_viewed", "Operator viewed the AgentPay inventory dashboard.", {
+        "sku_count": snapshot["summary"]["sku_count"],
+        "available": snapshot["summary"]["available"],
+        "reserved": snapshot["summary"]["reserved"],
+    })
+    return snapshot
+
+
+@app.post("/api/inventory/adjust")
+async def inventory_adjust(request: Request):
+    """Operator-only manual inventory correction or replenishment."""
+    require_admin_token(request)
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object.")
+    product_id = str(payload.get("product_id") or "").strip()
+    delta = payload.get("delta")
+    note = str(payload.get("note") or "Operator stock adjustment")[:200]
+    if not product_id:
+        raise HTTPException(status_code=422, detail="product_id is required.")
+    if isinstance(delta, bool) or not isinstance(delta, int) or delta == 0:
+        raise HTTPException(status_code=422, detail="delta must be a non-zero whole number.")
+    try:
+        item = adjust_inventory(product_id, delta, note)
+    except InventoryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await track_event("inventory_adjusted", "Operator adjusted AgentPay demo inventory.", {
+        "product_id": product_id, "delta": delta, "available": item["available"],
+    })
+    return {"item": item}
+
+
+@app.post("/api/inventory/reservations/{order_id}/release")
+async def inventory_release_reservation(order_id: str, request: Request):
+    """Explicit operator release for a checkout known to have been abandoned."""
+    require_admin_token(request)
+    result = release_inventory_reservation(order_id, "Operator released an abandoned checkout")
+    await track_event("inventory_reservation_operator_release", "Operator released an inventory reservation.", {
+        "order_id": order_id, "status": result.get("status"),
+    })
+    return result
+
+
+@app.get("/api/subscriptions")
+async def get_paypal_subscriptions(
+    request: Request,
+    page: int = Query(default=1, ge=1, le=10000000),
+    page_size: int = Query(default=20, ge=1, le=20),
+    status: str | None = Query(default=None),
+):
+    """Read-only live subscription list for the configured PayPal merchant."""
+    require_admin_token(request)
+    try:
+        status_value = validate_status(status)
+        result = await list_paypal_subscriptions(page=page, page_size=page_size, status=status_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PayPalError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        await track_event("paypal_subscriptions_list_error", "PayPal rejected the subscription list request.", {"http_status": exc.response.status_code})
+        if exc.response.status_code == 403:
+            detail = "PayPal denied subscription access. Confirm this REST app has Subscriptions API permissions and the Sandbox merchant account owns the subscriptions."
+        else:
+            detail = f"PayPal Subscriptions API returned HTTP {exc.response.status_code}. Check the Sandbox credentials and try again."
+        raise HTTPException(status_code=502, detail=detail) from exc
+    except httpx.RequestError as exc:
+        await track_event("paypal_subscriptions_list_error", "Could not reach PayPal to list subscriptions.", {"error_type": type(exc).__name__})
+        raise HTTPException(status_code=502, detail="Could not reach PayPal Subscriptions API. Check your internet connection and retry.") from exc
+    await track_event("paypal_subscriptions_listed", "Fetched a page of PayPal subscriptions.", {
+        "count": len(result.get("subscriptions", [])), "page": page, "status_filter": result.get("status_filter"),
+    })
+    return result
+
+
+@app.get("/api/subscriptions/{subscription_id}")
+async def get_paypal_subscription_detail(subscription_id: str, request: Request):
+    """Read-only detail view for one PayPal subscription."""
+    require_admin_token(request)
+    try:
+        safe_id = validate_subscription_id(subscription_id)
+        result = await get_paypal_subscription(safe_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PayPalError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        await track_event("paypal_subscription_detail_error", "PayPal rejected a subscription detail request.", {"http_status": exc.response.status_code})
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="PayPal subscription was not found in this Sandbox merchant account.") from exc
+        if exc.response.status_code == 403:
+            detail = "PayPal denied subscription access. Confirm the REST app has Subscriptions API permissions."
+        else:
+            detail = f"PayPal Subscriptions API returned HTTP {exc.response.status_code}."
+        raise HTTPException(status_code=502, detail=detail) from exc
+    except httpx.RequestError as exc:
+        await track_event("paypal_subscription_detail_error", "Could not reach PayPal for subscription details.", {"error_type": type(exc).__name__})
+        raise HTTPException(status_code=502, detail="Could not reach PayPal Subscriptions API. Check your connection and retry.") from exc
+    await track_event("paypal_subscription_detail_viewed", "Fetched PayPal subscription details.", {"subscription_id": safe_id, "status": result.get("status")})
+    return result
 
 
 @app.get("/api/paypal-mcp/status")

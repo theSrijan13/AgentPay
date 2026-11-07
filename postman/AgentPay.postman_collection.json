@@ -32,6 +32,27 @@
     {
       "key": "prompt",
       "value": "Find a cheaper product similar to the current shopping request"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "refundId",
+      "value": ""
+    },
+    {
+      "key": "mcpToolName",
+      "value": ""
+    },
+    {
+      "key": "photoDataUrl",
+      "value": "data:image/jpeg;base64,REPLACE_WITH_A_REAL_BASE64_IMAGE"
+    },
+    {
+      "key": "subscriptionId",
+      "value": "I-REPLACE_WITH_SANDBOX_SUBSCRIPTION_ID"
     }
   ],
   "item": [
@@ -227,7 +248,14 @@
       "name": "Get order",
       "request": {
         "method": "GET",
-        "url": "{{baseUrl}}/api/orders/{{orderID}}"
+        "url": "{{baseUrl}}/api/orders/{{orderID}}",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ]
       },
       "event": [
         {
@@ -274,6 +302,311 @@
             "exec": [
               "pm.test('event search succeeds', () => pm.response.to.have.status(200));",
               "pm.test('response contains events array', () => pm.expect(pm.response.json().events).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Shop from a photo (replace base64 data URL)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/agent/photo",
+        "description": "Paste a real data URL with valid base64 in photoDataUrl. This endpoint sends the image to Channel3; do not use private images.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"image_data_url\": \"{{photoDataUrl}}\",\n  \"prompt\": \"Find products similar to this photo under $200\",\n  \"user_id\": \"agentpay-postman-demo\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('photo response is successful or returns a clear configuration/validation error', () => pm.expect([200, 413, 422, 502, 503]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) { const d = pm.response.json(); if (d.conversation_id) pm.collectionVariables.set('conversationId', d.conversation_id); pm.test('image result source is explicit', () => pm.expect(d.source).to.eql('channel3')); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment history",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/payments/history?limit=20"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('payment history responds', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Refund remaining balance (explicitly test in Sandbox)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/payments/refund/{{orderID}}",
+        "description": "This sends an actual Sandbox refund. Only run after using a completed test order and confirming the request. The operator token is required.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": null,\n  \"note_to_payer\": \"AgentPay Sandbox refund test\",\n  \"confirm\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('refund is successful or gives a clear expected state/auth error', () => pm.expect([200, 400, 401, 403, 404, 409, 502, 503]).to.include(pm.response.code));",
+              "if (pm.response.code === 200 && pm.response.json().refund_id) pm.collectionVariables.set('refundId', pm.response.json().refund_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Refresh refund status (operator token required)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/payments/refunds/{{refundId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('refund status query returns a known status or a clear auth/not-found error', () => pm.expect([200, 401, 403, 404, 502, 503]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "PayPal MCP status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/paypal-mcp/status"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('MCP status responds', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Discover PayPal MCP read-only tools (operator token required)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/paypal-mcp/tools"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('MCP discovery succeeds or returns a clear config/auth error', () => pm.expect([200, 401, 403, 502, 503]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Call a PayPal MCP read-only tool (operator token required)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/paypal-mcp/call",
+        "description": "Set mcpToolName to a tool returned by the discovery endpoint. Mutating tools are blocked.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tool_name\": \"{{mcpToolName}}\",\n  \"arguments\": {}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('MCP tool call returns a result or a clear configuration/auth/input error', () => pm.expect([200, 400, 401, 403, 502, 503]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Post-purchase automation status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/automation/status"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('automation status responds', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Retry post-purchase delivery (operator token required)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/automation/retry/{{orderID}}",
+        "description": "Retries a failed/preview event; downstream Zapier action should deduplicate X-AgentPay-Event-ID. This does not place a retailer order."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('retry succeeds or returns a clear auth/order/config error', () => pm.expect([200, 401, 403, 404, 409, 502, 503]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List PayPal subscriptions (operator token required)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/subscriptions?page=1&page_size=20"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('subscription list succeeds', () => pm.response.to.have.status(200));",
+              "pm.test('response contains subscription array', () => pm.expect(pm.response.json().subscriptions).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get PayPal subscription details (operator token required)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-AgentPay-Admin-Token",
+            "value": "{{adminToken}}",
+            "type": "text"
+          }
+        ],
+        "url": "{{baseUrl}}/api/subscriptions/{{subscriptionId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('subscription detail succeeds', () => pm.response.to.have.status(200));",
+              "pm.test('response contains subscription ID', () => pm.expect(pm.response.json().id).to.be.a('string')); "
             ]
           }
         }

@@ -76,18 +76,53 @@ from .config import settings
 class PayPalError(RuntimeError):
     pass
 
-async def _access_token(client: httpx.AsyncClient) -> str:
-    if not settings.paypal_client_id or not settings.paypal_client_secret:
-        raise PayPalError("PayPal Sandbox credentials are not configured. Add them to backend/.env and restart FastAPI.")
-    raw = f"{settings.paypal_client_id}:{settings.paypal_client_secret}".encode()
+async def _access_token_for(
+    client: httpx.AsyncClient,
+    client_id: str,
+    client_secret: str,
+    base_url: str,
+) -> str:
+    if not client_id.strip() or not client_secret.strip():
+        raise PayPalError("PayPal API credentials are not configured.")
+
+    raw = f"{client_id}:{client_secret}".encode()
     basic = base64.b64encode(raw).decode()
+
     response = await client.post(
-        f"{settings.paypal_base_url}/v1/oauth2/token",
-        headers={"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"},
+        f"{base_url.rstrip('/')}/v1/oauth2/token",
+        headers={
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
         data={"grant_type": "client_credentials"},
     )
     response.raise_for_status()
-    return response.json()["access_token"]
+
+    token = response.json().get("access_token")
+    if not token:
+        raise PayPalError("PayPal did not return an OAuth access token.")
+
+    return token
+
+
+async def _access_token(client: httpx.AsyncClient) -> str:
+    """Existing checkout authentication."""
+    return await _access_token_for(
+        client,
+        settings.paypal_client_id,
+        settings.paypal_client_secret,
+        settings.paypal_base_url,
+    )
+
+
+async def _subscriptions_access_token(client: httpx.AsyncClient) -> str:
+    """Dedicated authentication for AgentPay subscription management."""
+    return await _access_token_for(
+        client,
+        settings.paypal_subscriptions_client_id,
+        settings.paypal_subscriptions_secret,
+        settings.paypal_subscriptions_base_url,
+    )
 
 async def create_order(total_major_units: str, items: list[dict[str, Any]], currency: str = "USD", request_id: str | None = None) -> dict[str, Any]:
     """Create a PayPal Checkout order in Sandbox using server-validated prices."""

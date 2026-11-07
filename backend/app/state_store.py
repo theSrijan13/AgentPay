@@ -49,6 +49,7 @@ with _LOCK:
 _PERSISTED_ORDER_FIELDS = (
     "status", "items", "total", "currency", "capture_id", "capture_request_id",
     "refunds", "refunded_total", "refund_status", "updated_at",
+    "inventory_reservation_id", "inventory_status",
 )
 
 
