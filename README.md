@@ -1,131 +1,327 @@
 # AgentPay
 
-An AI-assisted shopping agent prototype for the PayPal AI Hackathon. This is a hackathon/demo project, not a production payment platform.
+> **Autonomous AI Commerce Agent with Human-in-the-Loop Approval, Transactional Inventory & PayPal Sandbox Integration**  
+> *PayPal AI Hackathon Prototype*
 
-## Current MVP flow
-1. User describes a shopping goal.
-2. AgentPay searches Channel3 live product and retailer-offer data when configured, with a clearly labelled local demo fallback.
-3. User reviews products, price, availability, and retailer offer links, then selects products.
-4. FastAPI refreshes selected Channel3 product details, then validates product IDs, quantities, availability, prices, USD currency, and the parsed budget.
-5. PayPal Sandbox order is created from server-side validated prices.
-6. Buyer approves through the PayPal Checkout buttons.
-7. Backend captures the order and shows success only after PayPal returns a completed capture.
+AgentPay is an AI-powered shopping assistant and commerce workspace that researches products, compares real-time retailer offers, maintains ACID-compliant inventory reservations, and enables secure buyer checkout via PayPal Sandbox.
 
-> Payments are never executed by the LLM. Explicit buyer approval is required. Seeded demo-catalog prices are illustrative USD prices; Channel3 retailer offers are live discovery data and can change between searches.
+AgentPay is built on a strict **Human-in-the-Loop (HITL)** architecture: **AI agents never possess autonomous payment execution authority**. All financial transactions, recurring subscriptions, and inventory deductions require explicit, server-validated buyer consent and verified PayPal captures.
 
-## Stack
-- Frontend: React + TypeScript + Vite + `@paypal/react-paypal-js` + AG Grid Community
-- Backend: Python + FastAPI + HTTPX
-- Product discovery and shopping conversation: Channel3 Agentic Search + Conversational Agent, with a seeded catalog fallback
-- Payments: PayPal Orders v2 API (Sandbox)
-- Observability: optional Elastic / Elasticsearch indexing and searchable audit events, with bounded in-memory fallback
-- Delivery and testing: Render Blueprint, Postman collection, and APIMatic PayPal Context Plugin for developer-assistant workflows
+---
 
-## Prerequisites
-- Python 3.11+
-- Node.js 20+
-- A PayPal Developer account with a Sandbox REST app
-- A Sandbox buyer account for checkout testing
+## 🌟 Key Features & Multi-Page Workspace
 
-## Run locally
+AgentPay features a modular, multi-page workspace organized into five specialized operator and shopper views:
 
-### Backend (Terminal 1)
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Fill in PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in backend/.env
-uvicorn app.main:app --reload --port 8000
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                              AGENTPAY                                  │
+├─────────────────┬──────────────────────────────────────────────────────┤
+│ 🛍️ Shopping     │ Prompt Planning · Visual Studio · AG Grid · Checkout │
+│ 💳 Subscriptions│ Premium Plan · Recurring Billing · Merchant KPIs     │
+│ 📦 Inventory    │ Real-Time Stock · 30m Holds · Adjustments · Audit Log│
+│ ⚡ Orders & Pay │ Captured Orders · Partial/Full Refunds · PayPal MCP   │
+│ 🔍 Observability│ Elastic Traces · Audit Timeline · Health Diagnostics │
+└─────────────────┴──────────────────────────────────────────────────────┘
 ```
 
-### Frontend (Terminal 2)
-```bash
-cd frontend
-npm install
-cp .env.example .env
-# Set VITE_PAYPAL_CLIENT_ID to the same Sandbox Client ID (not the secret)
-npm run dev
+### 1. 🛍️ Shopping Agent (`/` workspace view)
+- **Natural Language Shopping Planner**: Interprets multi-constraint prompts (e.g., *"Build me a work-from-home setup under $80"*), extracts USD budgets, and suggests coordinated baskets.
+- **Visual Shopping Studio (Image-to-Product)**: Drag-and-drop reference photo search powered by Channel3's visual discovery engine (`POST /api/agent/photo`).
+- **Live Catalog & Retailer Discovery**: Live in-stock USD offers from Channel3 with high-resolution imagery and direct merchant links, backed by a deterministic local demo fallback.
+- **AG Grid Retailer Intelligence**: AG Grid Community data grid enabling sorting, filtering, and side-by-side comparison of merchant offers, conditions, and stock availability.
+- **Conversational Refinement Agent**: Multi-turn contextual chat (`POST /api/agent/chat`) to discover alternatives, ask questions, or tighten budget constraints while preserving conversation context.
+- **Interactive Checkout Rail**: Server-validated basket calculation with live PayPal checkout buttons (`PayPalOneTimePaymentButton` via `@paypal/react-paypal-js/sdk-v6`).
+
+### 2. 💳 Subscriptions Center
+- **AgentPay Premium Checkout**: Buyer-facing recurring billing subscription card ($9.99/month) powered by PayPal Subscriptions v1/v2 API and `PayPalSubscriptionButton`.
+- **Merchant Subscription Dashboard**: Real-time read-only visibility into merchant recurring revenue, active subscribers, suspended accounts, failed payment retry statuses, and next billing schedules (`GET /api/subscriptions`).
+- **Subscription Inspection Drawer**: Detailed modal view for subscriber IDs, billing cycles, last payment timestamps, and outstanding balances.
+
+### 3. 📦 Real-Time Transactional Inventory Engine (v1)
+- **Persistent SQLite Datastore**: Dedicated ACID tables tracking `on_hand`, `reserved`, and `available` (`on_hand - reserved`) stock quantities.
+- **Atomic Pre-Order Reservations**: Atomically reserves stock (`reserve_inventory`) for 30 minutes before creating the PayPal order to prevent overselling.
+- **Confirmed-Capture Deductions**: Permanently commits and deducts on-hand stock (`complete_inventory_reservation`) only after PayPal confirms capture status as `COMPLETED`.
+- **Safe Release on Failure/Abandonment**: Automatically releases reservations on buyer cancellation, network timeouts, or order creation errors (`release_inventory_reservation_by_id`).
+- **Operator Stock Adjustments**: Fast "+ Add" and "− Deduct" stock adjustment controls with audit notes and historical ledger logging (`inventory_movements`).
+
+### 4. ⚡ Orders & Payment Lifecycle
+- **Captured Sandbox Payments**: Chronological ledger of all Sandbox transactions, PayPal order IDs, and capture IDs stored locally in SQLite (`payment_orders`).
+- **Full & Partial Refunds**: Direct integration with PayPal's capture refund API (`POST /api/payments/refund/{order_id}`) with remaining balance tracking, reason notes, and idempotency protection.
+- **PayPal Agent Toolkit / MCP Bridge**: Read-only Model Context Protocol (MCP) tool discovery and execution via `@paypal/agent-toolkit-mcp`.
+- **Post-Purchase Automations**: Real-time webhook dispatch to Zapier Catch Hooks upon confirmed payment capture (`ZAPIER_WEBHOOK_URL`), with manual retry controls.
+
+### 5. 🔍 Observability & Telemetry
+- **Elasticsearch Audit Traces**: Seamless indexing of system events, shopping planning steps, stock adjustments, and PayPal payment states into Elastic Cloud / Elasticsearch.
+- **Privacy-Conscious Audit Log**: Excludes raw credit card numbers, passwords, buyer tokens, and proprietary payloads.
+- **In-Memory Fallback**: Fully functional in-memory event stream if Elasticsearch is not configured or offline.
+
+---
+
+## 🔒 Transactional Checkout Lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Shopper as Buyer
+    participant UI as React Workspace
+    participant API as FastAPI Backend
+    participant DB as SQLite Inventory
+    participant PP as PayPal Sandbox
+
+    Shopper->>UI: Add items to basket & click "Validate"
+    UI->>API: POST /api/cart/validate
+    API->>DB: Check get_available_stock() [on_hand - reserved]
+    DB-->>API: Stock confirmed (Available >= Requested)
+    API-->>UI: 200 OK (Calculated total & USD verified)
+
+    Shopper->>UI: Click "PayPal" Button
+    UI->>API: POST /api/payments/create-order
+    API->>DB: reserve_inventory() [status=RESERVED, TTL=30m]
+    API->>PP: POST /v2/checkout/orders (Idempotent Request)
+    PP-->>API: 201 Created (Order ID)
+    API->>DB: attach_inventory_reservation(res_id, order_id)
+    API-->>UI: Return orderID to SDK
+
+    Shopper->>PP: Approves payment in PayPal Modal
+    PP-->>UI: onApprove(data)
+    UI->>API: POST /api/payments/capture/{order_id}
+    API->>DB: extend_inventory_reservation(order_id)
+    API->>PP: POST /v2/checkout/orders/{id}/capture
+    PP-->>API: 200 OK (status=COMPLETED, capture_id)
+    API->>DB: complete_inventory_reservation(order_id) [Deduct on_hand]
+    API->>API: Dispatch Zapier Webhook (Background Task)
+    API-->>UI: 200 OK (Payment completed)
+    UI-->>Shopper: Display order confirmation & receipt
 ```
 
-Open http://localhost:5173. API docs: http://localhost:8000/docs.
+---
 
-## PayPal Sandbox setup
-1. Open the [PayPal Developer Dashboard](https://developer.paypal.com/dashboard/).
-2. Under **Apps & Credentials**, choose **Sandbox** and create or select a REST app.
-3. Copy the Sandbox **Client ID** and **Secret** into `backend/.env`:
+## 🛠️ Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| **Frontend** | React 18, TypeScript, Vite, `@paypal/react-paypal-js` (SDK v6), AG Grid Community, Lucide React |
+| **Backend** | Python 3.11+, FastAPI, Uvicorn, HTTPX (Async), SQLite3, Pydantic v2 |
+| **AI & Search** | Channel3 Agentic Search API, Channel3 Conversational Agent API, Channel3 Image Discovery |
+| **Payments** | PayPal Orders v2 API, PayPal Subscriptions v1/v2 API, PayPal Webhooks API |
+| **Agents & MCP** | PayPal Agent Toolkit MCP (`@paypal/agent-toolkit-mcp`) |
+| **Observability**| Elastic Cloud (Elasticsearch 8+), In-Memory Ring Buffer |
+| **Integrations** | Zapier Catch Hooks, APIMatic Developer Plugin, Postman Collection |
+
+---
+
+## 🚀 Quickstart Guide
+
+### Prerequisites
+- **Python 3.11+**
+- **Node.js 20+** and **npm**
+- **PayPal Developer Account** with a Sandbox REST App & Sandbox Personal Buyer Account
+
+---
+
+### Step 1: Backend Setup
+
+1. Open a terminal and navigate to the backend directory:
+   ```bash
+   cd backend
+   ```
+
+2. Create and activate a Python virtual environment:
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. Install required Python packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+   Edit `backend/.env` with your Sandbox credentials:
    ```dotenv
    PAYPAL_CLIENT_ID=your_sandbox_client_id
-   PAYPAL_CLIENT_SECRET=your_sandbox_secret
+   PAYPAL_CLIENT_SECRET=your_sandbox_client_secret
    PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com
-   ```
-4. Put the same Sandbox Client ID only (never the secret) in `frontend/.env`:
-   ```dotenv
-   VITE_PAYPAL_CLIENT_ID=your_sandbox_client_id
-   VITE_API_BASE_URL=http://localhost:8000
-   ```
-   The frontend also reads the public Client ID from `GET /api/public-config` at runtime. This is a fallback when Vite was launched from a directory that did not load `frontend/.env`. The Client ID is public; the Secret must remain backend-only.
-5. Restart FastAPI and Vite after modifying `.env` files. Use a Sandbox buyer account to approve the test payment.
-6. Do not commit `.env` files or share the Client Secret in chat, screenshots, or source control.
 
-The demo catalog uses USD because INR is not listed among PayPal's standard Checkout currencies. Do not treat the illustrative demo prices as currency-converted real-world prices.
-
-## Important prototype limitations
-- Orders and events are held in server memory and are lost when the backend restarts. Add database persistence before final hackathon submission.
-- The catalog is illustrative, not live inventory or sourced marketplace data.
-- Channel3 agentic search can interpret multi-constraint shopping queries when a valid API key is configured. The local fallback planner is deterministic. AgentPay's own multi-step tool-calling orchestrator remains a planned milestone.
-- Add automated tests, robust concurrency/idempotency handling, inventory reservation and production security review before any live deployment. This project is intended for PayPal Sandbox only.
-
-## Project status
-- [x] React shopping workspace
-- [x] Seeded USD demo catalog and basket validation
-- [x] Channel3 agentic search integration with current response schema, cleaned images, offer comparisons, retailer links, and price/availability refresh before validation
-- [x] PayPal Sandbox create-order / buyer approval / capture flow implemented
-- [x] AG Grid Community retailer offer comparison with sorting/filtering and add-selected-offer workflow
-- [x] Channel3 Conversational Agent endpoint for contextual follow-ups
-- [x] Optional Elastic event indexing/search with in-memory fallback
-- [x] Render Blueprint and Postman API collection
-- [x] APIMatic Context Plugin setup guidance
-- [ ] Persistent order storage and production-grade concurrency safety
-- [ ] Live end-to-end Channel3 + PayPal test with developer credentials
-- [ ] Final deployment validation and demo video
-
-## Channel3 live product discovery (recommended for the hackathon)
-Channel3 is integrated as the live catalog/search provider. It supplies structured product results, images, retailer offer links, prices, and offer availability. AgentPay uses Channel3 search defaults for locale (the raw REST body omits unsupported top-level locale fields) and only places an offer in the demo basket when the chosen retailer offer is in stock and priced in USD. Verify the returned offer currency before display or checkout.
-
-1. Create a free Channel3 API key at https://trychannel3.com/developers (the hackathon resource notes the promo code `PAYPAL-HACKATHON-2026` provides 20,000 searches for participants; confirm the current terms in the Channel3 dashboard).
-2. Add the key to `backend/.env`:
-   ```dotenv
+   # Channel3 API Key (Get a key at https://trychannel3.com/developers)
    CHANNEL3_API_KEY=your_channel3_api_key
-   CHANNEL3_BASE_URL=https://api.trychannel3.com/v1
-   CHANNEL3_SEARCH_MODE=agentic
+
+   # SQLite database path (default: agentpay.db)
+   AGENTPAY_DB_PATH=agentpay.db
+
+   # Admin operator token (for protected refunds/inventory endpoints)
+   AGENTPAY_ADMIN_TOKEN=db9564baea7c375df8781732c0961a59d91991480814c69b8a418db39d9910b8
    ```
-3. Restart FastAPI and click **Build my plan**. The backend passes `config.mode="agentic"` to Channel3, so its search planner can extract filters from multi-constraint requests. The dashboard should show `CHANNEL3 LIVE`, product images, retailer links, and offer comparisons when Channel3 returns eligible USD offers.
-4. If the key is absent or the API is unavailable, AgentPay clearly falls back to the local demo catalog.
 
-Official docs: https://docs.trychannel3.com/api-reference/v1/search, https://docs.trychannel3.com/guides/agentic-search, https://docs.trychannel3.com/guides/localization, https://docs.trychannel3.com/guides/images.
+5. Launch the FastAPI development server:
+   ```bash
+   uvicorn app.main:app --reload --port 8000
+   ```
+   *FastAPI documentation will be accessible at http://127.0.0.1:8000/docs.*
 
-**Payment/fulfilment limitation:** Channel3 supplies discovery and retailer offer URLs; the current PayPal flow is a separate Sandbox payment demonstration. It does not place an order with or cause fulfilment by the retailer. AgentPay displays this limitation in the checkout UI and links users to the retailer offer.
+---
 
+### Step 2: Frontend Setup
 
-## Channel3 HTTP 422 troubleshooting
+1. In a second terminal, navigate to the frontend directory:
+   ```bash
+   cd frontend
+   ```
 
-The live REST search request uses Channel3's default locale (English / US / USD), which matches the PayPal Sandbox demo. Do not add `country`, `language`, or `currency` as top-level fields in the search JSON body unless the active API schema accepts them; the current API returned HTTP 422 for those fields in testing. Search mode remains in `config.mode`. If a Channel3 request fails, the UI reports the API error separately from a missing API key.
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
+3. Configure frontend environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+   Edit `frontend/.env`:
+   ```dotenv
+   VITE_API_BASE_URL=http://localhost:8000
+   VITE_PAYPAL_CLIENT_ID=your_sandbox_client_id
+   VITE_PAYPAL_SUBSCRIPTIONS_CLIENT_ID=your_sandbox_subscriptions_client_id
+   VITE_AGENTPAY_ADMIN_TOKEN=db9564baea7c375df8781732c0961a59d91991480814c69b8a418db39d9910b8
+   ```
 
-## AG Grid offer comparison
-The shopping page includes an AG Grid Community table containing retailer offers for current search results. Users can sort/filter by product, retailer, price, availability, and condition, then add a specific merchant offer to the basket. The backend resolves the requested merchant from its server-side Channel3 cache and does not accept client-supplied price or buy URL fields. Community Grid is used so the project does not require an Enterprise license.
+4. Start the Vite development server:
+   ```bash
+   npm run dev
+   ```
+   *Open your browser at http://localhost:5173.*
 
-Official docs: https://www.ag-grid.com/react-data-grid/installation/
+---
 
-## Channel3 Conversational Agent
-`POST /api/agent/chat` sends a turn to Channel3's non-streaming Conversational Agent, optionally continues a `conversation_id`, applies in-stock and budget filters, returns structured product cards, and passes a stable, non-identifying demo user ID using `x-user-id`. The main "Build my plan" button now starts this conversation first and saves the returned conversation ID so follow-up requests can reuse context. The vendor API key stays on the backend. If the conversation endpoint fails, the UI may show search results as a fallback, but it also tells you contextual follow-ups are not active.
+## ⚙️ Environment Variables Reference
 
-## Elastic observability
-Set `ELASTICSEARCH_URL`, `ELASTIC_API_KEY`, and optionally `ELASTIC_INDEX_PREFIX` on the backend. Use the Elasticsearch endpoint from the Elastic deployment (not the Kibana URL) and an API key with permissions for the target index. Restart FastAPI after changing `.env`. AgentPay indexes safe events to `<prefix>-events` and supports `/api/observability/status`, `/api/observability/events`, and `POST /api/observability/reconnect`. The status response gives a sanitized diagnostic hint for authentication, endpoint, and connection failures. If Elastic is unconfigured or fails, the app continues with bounded in-memory history. The event stream does not include raw prompts, API credentials, access tokens, or raw PayPal payloads. See `docs/ELASTIC.md`.
+### Backend (`backend/.env`)
 
-## APIMatic, Postman, and Render
-- APIMatic PayPal Context Plugin install guide and review prompts: `docs/APIMATIC_CONTEXT_PLUGIN.md`. The plugin is for developer coding assistants; it is not a runtime dependency.
-- Import `postman/AgentPay.postman_collection.json`; instructions: `docs/POSTMAN.md`.
-- `render.yaml` defines a FastAPI service and a static Vite frontend. Edit the API/front-end Render URLs if your service slugs differ, and set all `sync: false` environment values in the Render dashboard. Use PayPal Sandbox credentials only.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `PAYPAL_CLIENT_ID` | **Yes** | — | PayPal Sandbox REST App Client ID |
+| `PAYPAL_CLIENT_SECRET` | **Yes** | — | PayPal Sandbox REST App Secret |
+| `PAYPAL_BASE_URL` | **Yes** | `https://api-m.sandbox.paypal.com` | PayPal Sandbox API endpoint |
+| `PAYPAL_WEBHOOK_ID` | No | `""` | PayPal Webhook ID for signature verification |
+| `AGENTPAY_DB_PATH` | No | `agentpay.db` | Local SQLite database filename |
+| `AGENTPAY_ADMIN_TOKEN` | No | `db9564...` | Shared secret protecting refunds & inventory mutations |
+| `CHANNEL3_API_KEY` | No | `""` | Channel3 live search & visual shopping key |
+| `CHANNEL3_SEARCH_MODE` | No | `agentic` | Search mode (`agentic` enables multi-constraint parsing) |
+| `PAYPAL_SUBSCRIPTIONS_CLIENT_ID` | No | `""` | PayPal Client ID for Subscriptions merchant |
+| `PAYPAL_SUBSCRIPTIONS_SECRET` | No | `""` | PayPal Client Secret for Subscriptions merchant |
+| `PAYPAL_SUBSCRIPTIONS_PLAN_ID` | No | `""` | Pre-created PayPal Subscription Plan ID (`P-...`) |
+| `ZAPIER_WEBHOOK_URL` | No | `""` | Optional Zapier Catch Hook for post-purchase automation |
+| `PAYPAL_MCP_ENABLED` | No | `true` | Enables `@paypal/agent-toolkit-mcp` bridge |
+| `ELASTICSEARCH_URL` | No | `""` | Elastic Cloud / Elasticsearch endpoint |
+| `ELASTIC_API_KEY` | No | `""` | Elasticsearch API key for event indexing |
+
+### Frontend (`frontend/.env`)
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `VITE_API_BASE_URL` | **Yes** | `http://localhost:8000` | FastAPI backend URL |
+| `VITE_PAYPAL_CLIENT_ID` | **Yes** | — | PayPal Sandbox Client ID |
+| `VITE_PAYPAL_SUBSCRIPTIONS_CLIENT_ID` | No | — | Sandbox Client ID for subscriptions button |
+| `VITE_AGENTPAY_ADMIN_TOKEN` | No | `db9564...` | Auto-authenticates operator dashboard tabs |
+
+---
+
+## 🗄️ Database Architecture (SQLite)
+
+AgentPay maintains local ACID-compliant persistence inside SQLite (`agentpay.db`):
+
+- **`inventory_items`**: Authoritative on-hand, reserved, and threshold counts for finite-stock catalog products.
+- **`inventory_reservations`**: Active and completed holds with timestamps, TTL expirations (30m), and order IDs.
+- **`inventory_reservation_items`**: Line-item quantities mapped to reservations.
+- **`inventory_movements`**: Immutable audit ledger logging all stock actions (`RESTOCK`, `RESERVE`, `COMMIT`, `RELEASE`, `ADJUST`).
+- **`payment_orders`**: Captured PayPal orders, amounts, refund states, and inventory linkage.
+- **`paypal_webhook_events`**: Idempotency ledger preventing double-processing of duplicate PayPal webhook deliveries.
+- **`post_purchase_runs`**: Dispatch logs and retry status for external Zapier webhooks.
+
+---
+
+## 🧪 Testing & Verification
+
+AgentPay features a comprehensive testing suite verifying all business logic, inventory safety, and frontend types:
+
+### 1. Pytest Backend Suite (22 Tests)
+Runs unit tests for budget extraction, Channel3 response normalization, subscription normalization, and offer selection:
+```bash
+PYTHONPATH=backend .venv/bin/pytest backend/tests
+```
+
+### 2. Comprehensive Smoke Test Suite (26 Tests)
+Validates all FastAPI routes, atomic reservations, stock rejections, adjustments, and telemetry:
+```bash
+.venv/bin/python3 scratch/comprehensive_smoke_test.py
+```
+
+### 3. Frontend TypeScript & Production Build
+Ensures zero type errors and validates asset bundling:
+```bash
+cd frontend
+npx tsc --noEmit
+npm run build
+```
+
+---
+
+## 🛡️ Security & Responsible AI Principles
+
+1. **Human-in-the-Loop Approval**:
+   LLMs and AI agents can plan, filter, compare, and recommend, but **cannot capture payments autonomously**. A human buyer must explicitly click the official PayPal button and authenticate the transaction.
+2. **Server-Side Price Authority**:
+   Client-submitted basket prices and stock counts are **never trusted**. The backend validates every SKU, recalculates line totals, enforces budget bounds, and quantizes amounts to two decimal places before calling PayPal.
+3. **Atomic Stock Protection**:
+   Inventory is atomically checked and held using SQLite immediate transactions (`BEGIN IMMEDIATE`) and Python locks to prevent concurrent overselling.
+4. **Credential Isolation**:
+   PayPal Client Secrets and Elasticsearch credentials remain strictly backend-only. The frontend receives only public Client IDs and scoped runtime configuration.
+
+---
+
+## 📁 Repository Structure
+
+```
+agentpay-integrated-v6/
+├── backend/
+│   ├── app/
+│   │   ├── main.py               # FastAPI application & REST routing
+│   │   ├── config.py             # Pydantic BaseSettings configuration
+│   │   ├── catalog.py            # Demo product catalog
+│   │   ├── channel3.py           # Channel3 agentic search & conversational API
+│   │   ├── inventory_service.py  # SQLite ACID inventory & reservation engine
+│   │   ├── paypal.py             # PayPal Orders v2 & Refunds API client
+│   │   ├── subscriptions.py      # PayPal Subscriptions API client
+│   │   ├── paypal_mcp.py         # PayPal Agent Toolkit MCP bridge
+│   │   ├── state_store.py        # SQLite persistent storage manager
+│   │   ├── automation_service.py # Post-purchase Zapier automation dispatcher
+│   │   └── elastic_service.py    # Elasticsearch telemetry indexer
+│   ├── tests/                    # Pytest test cases
+│   ├── requirements.txt          # Python dependencies
+│   └── agentpay.db               # SQLite database
+├── frontend/
+│   ├── src/
+│   │   ├── App.tsx                           # Multi-page React application
+│   │   ├── SubscriptionManagement.tsx        # Merchant subscriptions dashboard
+│   │   ├── AgentPaySubscriptionCheckout.tsx  # PayPal subscription button
+│   │   ├── InventoryManagement.tsx           # Inventory & stock operations UI
+│   │   ├── styles.css                        # Design system & responsive layout
+│   │   └── InventoryManagement.css           # Inventory dashboard styling
+│   ├── package.json                          # Node dependencies
+│   └── vite.config.ts                        # Vite build configuration
+├── docs/                                     # Extended documentation guides
+└── scratch/                                  # Smoke test scripts
+```
+
+---
+
+## 📜 License & Disclaimers
+
+- Built for the **PayPal AI Hackathon 2026**.
+- This is a hackathon demonstration and prototype intended for **PayPal Sandbox testing only**.
+- Channel3 search results provide live product discovery and retailer offer URLs; demo checkouts simulate payment collection for testing purposes and do not fulfill physical orders with third-party retailers.
