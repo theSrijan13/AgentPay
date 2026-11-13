@@ -20,9 +20,9 @@ import {
   Sparkles, Upload, WandSparkles, Workflow, Wrench, RotateCcw, X,
 } from 'lucide-react'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-const VITE_PAYPAL_CLIENT_ID = import.meta.env.VITE_PAYPAL_CLIENT_ID || ''
-const DEFAULT_ADMIN_TOKEN = import.meta.env.VITE_AGENTPAY_ADMIN_TOKEN || 'db9564baea7c375df8781732c0961a59d91991480814c69b8a418db39d9910b8'
+const API = import.meta.env.VITE_API_BASE_URL
+const VITE_PAYPAL_CLIENT_ID = import.meta.env.VITE_PAYPAL_CLIENT_ID
+const DEFAULT_ADMIN_TOKEN = import.meta.env.VITE_AGENTPAY_ADMIN_TOKEN
 const AG_GRID_MODULES = [AllCommunityModule]
 
 type AppPage = 'shopping' | 'subscriptions' | 'inventory' | 'orders' | 'observability'
