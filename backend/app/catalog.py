@@ -1,7 +1,5 @@
 from typing import Any
 
-# Demo data only. All prices are USD because INR is not listed among PayPal's
-# standard supported Checkout currencies. These are illustrative, not live prices.
 PRODUCTS: list[dict[str, Any]] = [
     {"id": "headphones-01", "name": "Wave ANC Headphones", "category": "headphones", "price": 59.99, "currency": "USD", "rating": 4.5, "review_count": 820, "stock": 12, "features": ["active noise cancellation", "30-hour battery", "USB-C"]},
     {"id": "headphones-02", "name": "StudioLite Wireless Headphones", "category": "headphones", "price": 39.99, "currency": "USD", "rating": 4.2, "review_count": 510, "stock": 8, "features": ["40-hour battery", "foldable", "USB-C"]},
