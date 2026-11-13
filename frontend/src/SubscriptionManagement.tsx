@@ -40,6 +40,8 @@ type SubscriptionResponse = {
     has_previous?: boolean
 }
 
+const API = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
+
 const STATUS_OPTIONS = [
     ['ALL', 'All statuses'],
     ['ACTIVE', 'Active'],
@@ -107,7 +109,7 @@ export default function SubscriptionManagement({ adminToken }: { adminToken: str
         try {
             const params = new URLSearchParams({ page: String(nextPage), page_size: '20' })
             if (nextStatus !== 'ALL') params.set('status', nextStatus)
-            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/subscriptions?${params.toString()}`, {
+            const response = await fetch(`${API}/api/subscriptions?${params.toString()}`, {
                 headers: { 'X-AgentPay-Admin-Token': adminToken.trim() },
             })
             const data = await response.json()
@@ -133,7 +135,7 @@ export default function SubscriptionManagement({ adminToken }: { adminToken: str
         setDetailError('')
         setDetail(null)
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+            const response = await fetch(`${API}/api/subscriptions/${encodeURIComponent(subscriptionId)}`, {
                 headers: { 'X-AgentPay-Admin-Token': adminToken.trim() },
             })
             const data = await response.json()

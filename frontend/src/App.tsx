@@ -20,9 +20,9 @@ import {
   Sparkles, Upload, WandSparkles, Workflow, Wrench, RotateCcw, X,
 } from 'lucide-react'
 
-const API = import.meta.env.VITE_API_BASE_URL
-const VITE_PAYPAL_CLIENT_ID = import.meta.env.VITE_PAYPAL_CLIENT_ID
-const DEFAULT_ADMIN_TOKEN = import.meta.env.VITE_AGENTPAY_ADMIN_TOKEN
+const API = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
+const VITE_PAYPAL_CLIENT_ID = (import.meta.env.VITE_PAYPAL_CLIENT_ID || '').trim()
+const DEFAULT_ADMIN_TOKEN = (import.meta.env.VITE_AGENTPAY_ADMIN_TOKEN || '').trim()
 const AG_GRID_MODULES = [AllCommunityModule]
 
 type AppPage = 'shopping' | 'subscriptions' | 'inventory' | 'orders' | 'observability'
@@ -241,7 +241,10 @@ export default function App() {
         setCatalogSource(data.source === 'channel3' ? 'channel3' : 'demo')
         if (data.message) setMessage(data.message)
       })
-      .catch(() => setMessage('API unavailable. Start the FastAPI backend on port 8000.'))
+      .catch((err) => {
+        console.error('Failed to load initial catalog from', API, err)
+        setMessage(`API unavailable (${API}). If using Render free tier, the backend takes ~50s to wake up from cold sleep.`)
+      })
     void refreshTelemetry('')
   }, []) // initial bootstrap only
 

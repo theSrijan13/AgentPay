@@ -74,9 +74,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AgentPay API", version="0.7.0", lifespan=lifespan)
+
+# Allow configured frontend origins (supports comma-separated list), local dev, and Vercel deployments
+allowed_origins = [o.strip() for o in settings.frontend_origin.split(",") if o.strip()]
+for dev_origin in ("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"):
+    if dev_origin not in allowed_origins:
+        allowed_origins.append(dev_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
